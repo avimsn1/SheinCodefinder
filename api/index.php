@@ -1148,7 +1148,7 @@ function processOneNumber($access_token) {
 }
 
 // ============================================================================
-// WEB INTERFACE
+// WEB INTERFACE - COMPLETE WITH HTML/CSS/JS
 // ============================================================================
 if ($isWeb) {
     // Start output buffering to prevent headers already sent errors
@@ -1319,6 +1319,7 @@ if ($isWeb) {
             
             header('Content-Type: text/csv');
             header('Content-Disposition: attachment; filename="' . basename($csvFile) . '"');
+            header('Content-Length: ' . filesize($csvFile));
             readfile($csvFile);
             ob_end_flush();
             exit;
@@ -1400,10 +1401,712 @@ if ($isWeb) {
     // Clear output buffer before sending HTML
     ob_clean();
     
-    // ... (the entire HTML section from previous code goes here, exactly as before)
-    // [I'm omitting the HTML for brevity - it's the same as in the previous response]
+    // Send HTML with proper headers
+    header('Content-Type: text/html; charset=utf-8');
+    ?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SHEIN Voucher Checker</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: white;
+            border-radius: 15px 15px 0 0;
+            padding: 25px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            color: #4a5568;
+        }
+        
+        .header p {
+            color: #718096;
+            font-size: 16px;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            transition: transform 0.3s;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+        
+        .stat-card .label {
+            font-size: 14px;
+            color: #718096;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .stat-card .value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #4a5568;
+        }
+        
+        .stat-card.total { border-left: 4px solid #4299e1; }
+        .stat-card.not-registered { border-left: 4px solid #f56565; }
+        .stat-card.registered { border-left: 4px solid #9f7aea; }
+        .stat-card.vouchers { border-left: 4px solid #48bb78; }
+        .stat-card.retries { border-left: 4px solid #ecc94b; }
+        
+        .control-panel {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        }
+        
+        .input-group {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .input-group input {
+            flex: 1;
+            min-width: 250px;
+            padding: 12px 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        .input-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-danger {
+            background: #f56565;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #e53e3e;
+            transform: translateY(-2px);
+        }
+        
+        .btn-success {
+            background: #48bb78;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #38a169;
+            transform: translateY(-2px);
+        }
+        
+        .tables-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .table-wrapper {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        }
+        
+        .table-header {
+            background: #f7fafc;
+            padding: 15px 20px;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        
+        .table-header h3 {
+            color: #4a5568;
+            font-size: 18px;
+        }
+        
+        .table-scroll {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th {
+            background: #edf2f7;
+            padding: 12px;
+            text-align: left;
+            font-size: 12px;
+            text-transform: uppercase;
+            color: #718096;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 14px;
+        }
+        
+        .status-success { color: #48bb78; font-weight: 600; }
+        .status-error { color: #f56565; font-weight: 600; }
+        .status-warning { color: #ecc94b; font-weight: 600; }
+        .status-info { color: #4299e1; font-weight: 600; }
+        
+        .vouchers-section {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        }
+        
+        .voucher-item {
+            display: flex;
+            align-items: center;
+            padding: 15px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .voucher-item:last-child {
+            border-bottom: none;
+        }
+        
+        .voucher-badge {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            margin-right: 15px;
+        }
+        
+        .voucher-details {
+            flex: 1;
+        }
+        
+        .voucher-details strong {
+            color: #4a5568;
+            font-size: 16px;
+        }
+        
+        .voucher-details .meta {
+            color: #718096;
+            font-size: 13px;
+            margin-top: 4px;
+        }
+        
+        .voucher-code {
+            background: #edf2f7;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 14px;
+            color: #4a5568;
+        }
+        
+        .alert {
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .alert-info {
+            background: #ebf8ff;
+            border-left: 4px solid #4299e1;
+            color: #2b6cb0;
+        }
+        
+        .status-text {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .status-text.success { background: #c6f6d5; color: #22543d; }
+        .status-text.error { background: #fed7d7; color: #742a2a; }
+        .status-text.warning { background: #feebc8; color: #744210; }
+        .status-text.info { background: #bee3f8; color: #1e4a6b; }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .file-links {
+            background: white;
+            border-radius: 12px;
+            padding: 15px;
+            margin-top: 20px;
+        }
+        
+        .file-link {
+            background: #edf2f7;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            color: #4a5568;
+            text-decoration: none;
+            display: inline-block;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .file-link:hover {
+            background: #e2e8f0;
+        }
+        
+        @media (max-width: 768px) {
+            .tables-container {
+                grid-template-columns: 1fr;
+            }
+            
+            .input-group {
+                flex-direction: column;
+            }
+            
+            .btn {
+                width: 100%;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 SHEIN Voucher Checker</h1>
+            <p>Automated phone number checker with IP rotation and retry logic for REAL errors only</p>
+        </div>
+        
+        <?php if ($isRunning): ?>
+        <div class="alert alert-info" id="runningAlert">
+            <div style="display: flex; align-items: center;">
+                <span class="loading"></span>
+                <strong>Checker is running</strong> for base number: <?php echo htmlspecialchars($storedBaseNumber); ?>
+                <span style="margin-left: 10px;">Processing numbers...</span>
+            </div>
+            <div style="margin-top: 15px;">
+                <a href="?stop=1" class="btn btn-danger" style="font-size: 14px; padding: 8px 20px;">🛑 Stop Checker</a>
+                <a href="?export=csv" class="btn btn-success" style="font-size: 14px; padding: 8px 20px; margin-left: 10px;">📥 Export CSV</a>
+            </div>
+        </div>
+        <?php endif; ?>
+        
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card total">
+                <div class="label">Total Processed</div>
+                <div class="value" id="stat-total"><?php echo number_format($stats['total']); ?></div>
+            </div>
+            <div class="stat-card not-registered">
+                <div class="label">Not Registered</div>
+                <div class="value" id="stat-not-registered"><?php echo number_format($stats['not_registered']); ?></div>
+            </div>
+            <div class="stat-card registered">
+                <div class="label">Registered</div>
+                <div class="value" id="stat-registered"><?php echo number_format($stats['registered']); ?></div>
+            </div>
+            <div class="stat-card vouchers">
+                <div class="label">Vouchers Found</div>
+                <div class="value" id="stat-vouchers"><?php echo number_format($stats['vouchers']); ?></div>
+            </div>
+            <div class="stat-card retries">
+                <div class="label">Pending Retries</div>
+                <div class="value" id="stat-retries"><?php echo number_format($stats['retries']); ?></div>
+            </div>
+        </div>
+        
+        <div class="control-panel">
+            <?php if (!$isRunning): ?>
+            <form method="POST" class="input-group" id="startForm">
+                <input type="text" name="base_number" placeholder="Enter base number (e.g., 98, 987, 98765)" required 
+                       value="<?php echo htmlspecialchars($storedBaseNumber); ?>">
+                <button type="submit" class="btn btn-primary" id="startBtn">▶ Start Checker</button>
+            </form>
+            <?php else: ?>
+            <div class="input-group">
+                <input type="text" value="Checker running for: <?php echo htmlspecialchars($storedBaseNumber); ?>" disabled>
+                <a href="?stop=1" class="btn btn-danger" id="stopBtn">🛑 Stop Checker</a>
+            </div>
+            <?php endif; ?>
+            
+            <p style="margin-top: 15px; color: #718096; font-size: 13px;">
+                <strong>Features:</strong> IP rotation per request | 200ms delay | Only REAL errors retried (timeouts, 5xx, empty responses)
+            </p>
+        </div>
+        
+        <div class="tables-container">
+            <!-- Sent Requests -->
+            <div class="table-wrapper">
+                <div class="table-header">
+                    <h3>📤 Sent Requests (Last 15)</h3>
+                </div>
+                <div class="table-scroll">
+                    <table id="sentTable">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Number</th>
+                                <th>Step</th>
+                                <th>IP</th>
+                                <th>Data</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (!empty($sentLog)): ?>
+                                <?php foreach ($sentLog as $entry): ?>
+                                <tr>
+                                    <td><?php echo htmlspecialchars($entry['time'] ?? ''); ?></td>
+                                    <td><strong><?php echo htmlspecialchars($entry['number'] ?? ''); ?></strong></td>
+                                    <td><span class="status-text info"><?php echo htmlspecialchars($entry['step'] ?? ''); ?></span></td>
+                                    <td><?php echo htmlspecialchars($entry['ip'] ?? ''); ?></td>
+                                    <td><?php echo htmlspecialchars($entry['data'] ?? ''); ?></td>
+                                </tr>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <tr><td colspan="5" style="text-align: center; padding: 30px;">No data yet. Start the checker to begin.</td></tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Received Responses -->
+            <div class="table-wrapper">
+                <div class="table-header">
+                    <h3>📥 Received Responses (Last 15)</h3>
+                </div>
+                <div class="table-scroll">
+                    <table id="receivedTable">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Number</th>
+                                <th>Status</th>
+                                <th>Voucher</th>
+                                <th>Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (!empty($receivedLog)): ?>
+                                <?php foreach ($receivedLog as $entry): 
+                                    $statusClass = '';
+                                    $statusText = '';
+                                    
+                                    if ($entry['status'] == 'success') {
+                                        $statusClass = 'success';
+                                        $statusText = '✅ VOUCHER FOUND';
+                                    } elseif ($entry['status'] == 'not_registered') {
+                                        $statusClass = 'error';
+                                        $statusText = '❌ NOT REGISTERED';
+                                    } elseif ($entry['status'] == 'registered') {
+                                        $statusClass = 'info';
+                                        $statusText = '📱 REGISTERED';
+                                    } elseif ($entry['status'] == 'token_obtained') {
+                                        $statusClass = 'info';
+                                        $statusText = '🔑 TOKEN OK';
+                                    } elseif ($entry['status'] == 'retry') {
+                                        $statusClass = 'warning';
+                                        $statusText = '🔄 RETRY (' . ($entry['retryCount'] ?? 1) . '/' . MAX_RETRIES . ')';
+                                    } else {
+                                        $statusClass = 'error';
+                                        $statusText = '⚠ ERROR';
+                                    }
+                                ?>
+                                <tr>
+                                    <td><?php echo htmlspecialchars($entry['time'] ?? ''); ?></td>
+                                    <td><strong><?php echo htmlspecialchars($entry['number'] ?? ''); ?></strong></td>
+                                    <td><span class="status-text <?php echo $statusClass; ?>"><?php echo $statusText; ?></span></td>
+                                    <td><?php echo htmlspecialchars($entry['voucher'] ?? '-'); ?></td>
+                                    <td><?php echo isset($entry['amount']) ? '₹' . htmlspecialchars($entry['amount']) : '-'; ?></td>
+                                </tr>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <tr><td colspan="5" style="text-align: center; padding: 30px;">No data yet. Start the checker to begin.</td></tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Recent Vouchers -->
+        <div class="vouchers-section" id="vouchersSection">
+            <h3 style="margin-bottom: 15px; color: #4a5568;">🎟 Recent Vouchers Found</h3>
+            <div id="vouchersList">
+                <?php if (!empty($vouchers)): ?>
+                    <?php foreach ($vouchers as $voucher): ?>
+                    <div class="voucher-item">
+                        <span class="voucher-badge">VOUCHER</span>
+                        <div class="voucher-details">
+                            <strong><?php echo htmlspecialchars($voucher['number']); ?></strong>
+                            <div class="meta">
+                                Instagram: @<?php echo htmlspecialchars($voucher['username'] ?? 'N/A'); ?> | 
+                                Expires: <?php echo htmlspecialchars($voucher['expiry'] ?? 'N/A'); ?>
+                            </div>
+                        </div>
+                        <div style="text-align: right;">
+                            <span class="voucher-code"><?php echo htmlspecialchars($voucher['voucher'] ?? 'N/A'); ?></span>
+                            <div style="font-weight: bold; color: #48bb78; margin-top: 5px;">₹<?php echo htmlspecialchars($voucher['amount'] ?? '0'); ?></div>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <p style="color: #718096; text-align: center; padding: 20px;">No vouchers found yet</p>
+                <?php endif; ?>
+            </div>
+        </div>
+        
+        <!-- File Links -->
+        <div class="file-links">
+            <h4 style="color: #4a5568; margin-bottom: 10px;">📁 Saved Files</h4>
+            <div>
+                <?php
+                $files = ['registered_numbers.txt', 'registered_numbers.json', 'voucher_numbers.txt', 'voucher_numbers.json', 'all_results.json', 'checked_numbers.json'];
+                foreach ($files as $file):
+                    $filePath = '/tmp/' . $file;
+                    if (file_exists($filePath)):
+                ?>
+                <a href="download.php?file=<?php echo urlencode($file); ?>" class="file-link" target="_blank">
+                    📄 <?php echo $file; ?>
+                </a>
+                <?php
+                    endif;
+                endforeach;
+                ?>
+            </div>
+        </div>
+    </div>
     
-    // After all HTML, end output buffering
+    <?php if ($isRunning): ?>
+    <script>
+        // Configuration
+        const MAX_RETRIES = <?php echo MAX_RETRIES; ?>;
+        let updateInterval = setInterval(updateData, 2000);
+        
+        // Update function
+        function updateData() {
+            fetch('?ajax=process')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.error('Error:', data.error);
+                        return;
+                    }
+                    
+                    // Update stats
+                    document.getElementById('stat-total').textContent = data.stats.total.toLocaleString();
+                    document.getElementById('stat-not-registered').textContent = data.stats.not_registered.toLocaleString();
+                    document.getElementById('stat-registered').textContent = data.stats.registered.toLocaleString();
+                    document.getElementById('stat-vouchers').textContent = data.stats.vouchers.toLocaleString();
+                    document.getElementById('stat-retries').textContent = data.stats.retries.toLocaleString();
+                    
+                    // Update sent table
+                    updateSentTable(data.sent_log);
+                    
+                    // Update received table
+                    updateReceivedTable(data.received_log);
+                    
+                    // Update vouchers
+                    updateVouchers(data.vouchers);
+                })
+                .catch(error => {
+                    console.error('Fetch error:', error);
+                });
+        }
+        
+        function updateSentTable(sentLog) {
+            const tbody = document.querySelector('#sentTable tbody');
+            if (!tbody) return;
+            
+            let html = '';
+            if (sentLog && sentLog.length > 0) {
+                sentLog.forEach(entry => {
+                    html += `<tr>
+                        <td>${escapeHtml(entry.time || '')}</td>
+                        <td><strong>${escapeHtml(entry.number || '')}</strong></td>
+                        <td><span class="status-text info">${escapeHtml(entry.step || '')}</span></td>
+                        <td>${escapeHtml(entry.ip || '')}</td>
+                        <td>${escapeHtml(entry.data || '')}</td>
+                    </tr>`;
+                });
+            } else {
+                html = '<tr><td colspan="5" style="text-align: center; padding: 30px;">No data yet</td></tr>';
+            }
+            tbody.innerHTML = html;
+        }
+        
+        function updateReceivedTable(receivedLog) {
+            const tbody = document.querySelector('#receivedTable tbody');
+            if (!tbody) return;
+            
+            let html = '';
+            if (receivedLog && receivedLog.length > 0) {
+                receivedLog.forEach(entry => {
+                    let statusClass = '';
+                    let statusText = '';
+                    
+                    if (entry.status == 'success') {
+                        statusClass = 'success';
+                        statusText = '✅ VOUCHER FOUND';
+                    } else if (entry.status == 'not_registered') {
+                        statusClass = 'error';
+                        statusText = '❌ NOT REGISTERED';
+                    } else if (entry.status == 'registered') {
+                        statusClass = 'info';
+                        statusText = '📱 REGISTERED';
+                    } else if (entry.status == 'token_obtained') {
+                        statusClass = 'info';
+                        statusText = '🔑 TOKEN OK';
+                    } else if (entry.status == 'retry') {
+                        statusClass = 'warning';
+                        statusText = `🔄 RETRY (${entry.retryCount || 1}/${MAX_RETRIES})`;
+                    } else {
+                        statusClass = 'error';
+                        statusText = '⚠ ERROR';
+                    }
+                    
+                    html += `<tr>
+                        <td>${escapeHtml(entry.time || '')}</td>
+                        <td><strong>${escapeHtml(entry.number || '')}</strong></td>
+                        <td><span class="status-text ${statusClass}">${statusText}</span></td>
+                        <td>${escapeHtml(entry.voucher || '-')}</td>
+                        <td>${entry.amount ? '₹' + escapeHtml(entry.amount) : '-'}</td>
+                    </tr>`;
+                });
+            } else {
+                html = '<tr><td colspan="5" style="text-align: center; padding: 30px;">No data yet</td></tr>';
+            }
+            tbody.innerHTML = html;
+        }
+        
+        function updateVouchers(vouchers) {
+            const vouchersList = document.getElementById('vouchersList');
+            if (!vouchersList) return;
+            
+            if (vouchers && vouchers.length > 0) {
+                let html = '';
+                vouchers.forEach(voucher => {
+                    html += `<div class="voucher-item">
+                        <span class="voucher-badge">VOUCHER</span>
+                        <div class="voucher-details">
+                            <strong>${escapeHtml(voucher.number)}</strong>
+                            <div class="meta">
+                                Instagram: @${escapeHtml(voucher.username || 'N/A')} | 
+                                Expires: ${escapeHtml(voucher.expiry || 'N/A')}
+                            </div>
+                        </div>
+                        <div style="text-align: right;">
+                            <span class="voucher-code">${escapeHtml(voucher.voucher || 'N/A')}</span>
+                            <div style="font-weight: bold; color: #48bb78; margin-top: 5px;">₹${escapeHtml(voucher.amount || '0')}</div>
+                        </div>
+                    </div>`;
+                });
+                vouchersList.innerHTML = html;
+            }
+        }
+        
+        function escapeHtml(unsafe) {
+            if (!unsafe) return '';
+            return String(unsafe)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+        
+        // Stop updates when leaving page
+        window.addEventListener('beforeunload', function() {
+            clearInterval(updateInterval);
+        });
+    </script>
+    <?php endif; ?>
+</body>
+</html>
+    <?php
+    
     ob_end_flush();
     exit;
 }
