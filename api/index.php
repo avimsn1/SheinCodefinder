@@ -1080,7 +1080,7 @@ if ($isWeb && !isset($_GET['download'])) {
         // Get access token first
         $ip = randIp();
         $adId = genDeviceId();
-        $url = "https://api.rep.sheinindia.in/uaas/jwt/token/client";
+        $url = "https://api.services.sheinindia.in/uaas/jwt/token/client";
         $headers = [
             "Client_type: Android/29",
             "Accept: application/json",
@@ -2108,7 +2108,7 @@ if ($isCli) {
     echo "⏳ Obtaining access token... ";
     $ip = randIp();
     $adId = genDeviceId();
-    $url = "https://api.rep.sheinindia.in/uaas/jwt/token/client";
+    $url = "https://api.services.sheinindia.in/uaas/jwt/token/client";
     $headers = [
         "Client_type: Android/29",
         "Accept: application/json",
