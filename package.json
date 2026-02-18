@@ -1,0 +1,16 @@
+{
+  "name": "shein-voucher-checker",
+  "version": "1.0.0",
+  "description": "SHEIN Voucher Checker",
+  "main": "api/check.js",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "node-fetch": "^3.3.0"
+  },
+  "scripts": {
+    "start": "vercel dev"
+  },
+  "engines": {
+    "node": "18.x"
+  }
+}
