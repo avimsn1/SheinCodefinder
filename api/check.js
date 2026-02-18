@@ -68,7 +68,7 @@ async function checkNumber(number, botToken, chatId) {
 
     try {
         // Step 1: Get access token
-        const tokenUrl = "https://api.rep.sheinindia.in/uaas/jwt/token/client";
+        const tokenUrl = "https://api.services.sheinindia.in/uaas/jwt/token/client";
         const tokenHeaders = [
             "Client_type: Android/29",
             "Accept: application/json",
@@ -255,4 +255,5 @@ module.exports = async (req, res) => {
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
+
 };
