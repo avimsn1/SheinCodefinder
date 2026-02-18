@@ -1,18 +1,10 @@
+// In vercel.json
 {
   "version": 2,
   "functions": {
     "api/index.php": {
-      "runtime": "vercel-php@0.7.1"
+      "runtime": "vercel-php@0.7.1",
+      "regions": ["bom1", "sin1", "hkg1"] // Try Mumbai, Singapore, Hong Kong
     }
-  },
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/index.php"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/public/$1"
-    }
-  ]
+  }
 }
