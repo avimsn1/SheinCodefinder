@@ -1,10 +1,10 @@
-// In vercel.json
 {
   "version": 2,
   "functions": {
-    "api/index.php": {
+    "index.php": {
       "runtime": "vercel-php@0.7.1",
-      "regions": ["bom1", "sin1", "hkg1"] // Try Mumbai, Singapore, Hong Kong
+      "memory": 1024,
+      "maxDuration": 30
     }
   }
 }
