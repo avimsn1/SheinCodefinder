@@ -119,7 +119,7 @@ try {
     error_log("Checking number: $number, IP: $ip, AdId: $adId");
     
     // Step 1: Get access token
-    $url = "https://api.services.sheinindia.in/uaas/jwt/token/client";
+    $url = "https://api.rep.sheinindia.in/uaas/jwt/token/client";
     $headers = [
         "Client_type: Android/29",
         "Accept: application/json",
@@ -275,4 +275,5 @@ try {
     error_log("Exception: " . $e->getMessage());
     echo json_encode(['status' => 'error', 'error' => $e->getMessage(), 'number' => $number]);
 }
+
 ?>
