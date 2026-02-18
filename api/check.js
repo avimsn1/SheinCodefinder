@@ -97,7 +97,7 @@ async function checkNumber(number, botToken, chatId) {
         }
 
         // Step 2: Account check
-        const accountUrl = "https://api.services.sheinindia.in/uaas/accountCheck?client_type=Android%2F29&client_version=1.2.0";
+        const accountUrl = "https://api.services.sheinindia.in/uaas/accountCheck?client_type=Android%2F29&client_version=1.0.8";
         const accountHeaders = [
             `Authorization: Bearer ${access_token}`,
             "Requestid: account_check",
@@ -257,3 +257,4 @@ module.exports = async (req, res) => {
     }
 
 };
+
