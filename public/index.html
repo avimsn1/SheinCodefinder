@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SHEIN Voucher Checker</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>SHEIN Voucher Checker</h1>
+        
+        <div class="config-section">
+            <h3>Telegram Configuration</h3>
+            <input type="text" id="botToken" placeholder="Bot Token" value="YOUR_BOT_TOKEN">
+            <input type="text" id="chatId" placeholder="Chat ID" value="YOUR_CHAT_ID">
+        </div>
+
+        <div class="input-section">
+            <h3>Phone Number Prefix</h3>
+            <input type="text" id="prefix" placeholder="Enter prefix (e.g., 8, 81, 812)" maxlength="9">
+            <div class="button-group">
+                <button id="startBtn" class="start">Start Checking</button>
+                <button id="stopBtn" class="stop" disabled>Stop</button>
+            </div>
+        </div>
+
+        <div class="stats">
+            <div class="stat-box">
+                <h3>Not Registered</h3>
+                <p id="notRegistered">0</p>
+            </div>
+            <div class="stat-box">
+                <h3>Registered (No Voucher)</h3>
+                <p id="registeredNoVoucher">0</p>
+            </div>
+            <div class="stat-box">
+                <h3>Vouchers Found</h3>
+                <p id="vouchersFound">0</p>
+            </div>
+            <div class="stat-box">
+                <h3>API Errors</h3>
+                <p id="apiErrors">0</p>
+            </div>
+        </div>
+
+        <div class="log-section">
+            <h3>Live Log</h3>
+            <div id="log"></div>
+        </div>
+
+        <div class="results-section">
+            <h3>Found Vouchers</h3>
+            <table id="results">
+                <thead>
+                    <tr>
+                        <th>Number</th>
+                        <th>Instagram</th>
+                        <th>Voucher Code</th>
+                        <th>Amount</th>
+                        <th>Min Purchase</th>
+                        <th>Expiry</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
