@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SHEIN Voucher Checker</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .config-section {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 25px;
+        }
+        
+        .config-section h3 {
+            color: #495057;
+            margin-bottom: 20px;
+            font-size: 18px;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #495057;
+            font-weight: 500;
+            font-size: 14px;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .form-group small {
+            display: block;
+            margin-top: 5px;
+            color: #6c757d;
+            font-size: 12px;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .stats {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 25px;
+            display: none;
+        }
+        
+        .stats.visible {
+            display: block;
+        }
+        
+        .stats h3 {
+            color: #495057;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+        
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #6c757d;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #495057;
+        }
+        
+        .stat-value.success { color: #28a745; }
+        .stat-value.warning { color: #ffc107; }
+        .stat-value.danger { color: #dc3545; }
+        
+        .log-container {
+            background: #1e1e2f;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+            height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 5px;
+        }
+        
+        .voucher-found {
+            color: #00ff00;
+            font-weight: bold;
+        }
+        
+        .filtered-out {
+            color: #ffaa00;
+        }
+        
+        .download-section {
+            margin-top: 20px;
+            text-align: center;
+        }
+        
+        .download-btn {
+            display: inline-block;
+            background: #28a745;
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-size: 14px;
+            margin: 0 5px;
+        }
+        
+        .warning {
+            background: #fff3cd;
+            color: #856404;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            border-left: 4px solid #ffc107;
+        }
+        
+        .warning strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎟️ SHEIN Voucher Checker</h1>
+            <p>Check phone numbers for SHEIN vouchers (SVH, SVD, SVI, SVC)</p>
+        </div>
+        
+        <div class="content">
+            <div class="warning">
+                <strong>⚠️ Important Notes:</strong>
+                <ul style="margin-left: 20px; margin-top: 5px;">
+                    <li>This is a serverless deployment - script runs for max 60 seconds</li>
+                    <li>Results are saved temporarily and can be downloaded</li>
+                    <li>Only vouchers starting with SVH, SVD, SVI, SVC trigger Telegram notifications</li>
+                    <li>Large number ranges may need multiple runs</li>
+                </ul>
+            </div>
+            
+            <div class="config-section">
+                <h3>📱 Configuration</h3>
+                
+                <div class="form-group">
+                    <label>Telegram Bot Token</label>
+                    <input type="text" id="botToken" placeholder="8479991961:AAEWken8DazbjTaiN_DAGwTuY3Gq0-tb1Hc" value="8479991961:AAEWken8DazbjTaiN_DAGwTuY3Gq0-tb1Hc">
+                </div>
+                
+                <div class="form-group">
+                    <label>Telegram Chat ID</label>
+                    <input type="text" id="chatId" placeholder="1366899854" value="1366899854">
+                </div>
+                
+                <div class="form-group">
+                    <label>Base Phone Number (any length)</label>
+                    <input type="text" id="baseNumber" placeholder="Enter at least 1 digit...">
+                    <small>Examples: 98, 987, 9876, 9876543210</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Number of checks to run</label>
+                    <input type="number" id="numChecks" value="50" min="1" max="200">
+                    <small>Max 200 due to serverless timeout (60 seconds)</small>
+                </div>
+            </div>
+            
+            <button class="btn" onclick="startChecking()" id="startBtn">Start Checking</button>
+            
+            <div class="stats" id="stats">
+                <h3>📊 Statistics</h3>
+                <div class="stat-grid">
+                    <div class="stat-item">
+                        <div class="stat-label">Total Checked</div>
+                        <div class="stat-value" id="statTotal">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Vouchers Found</div>
+                        <div class="stat-value success" id="statVouchers">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Registered</div>
+                        <div class="stat-value" id="statRegistered">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Not Registered</div>
+                        <div class="stat-value" id="statNotReg">0</div>
+                    </div>
+                </div>
+                
+                <h3>📋 Live Log</h3>
+                <div class="log-container" id="log"></div>
+                
+                <div class="download-section" id="downloadSection" style="display: none;">
+                    <a href="#" class="download-btn" id="downloadVouchers">📥 Download Vouchers CSV</a>
+                    <a href="#" class="download-btn" id="downloadAll">📥 Download All Results</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let eventSource = null;
+        
+        function addLog(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            
+            let color = '#00ff00';
+            if (type === 'voucher') color = '#00ff00';
+            else if (type === 'filtered') color = '#ffaa00';
+            else if (type === 'error') color = '#ff4444';
+            else if (type === 'success') color = '#4CAF50';
+            
+            entry.style.color = color;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function updateStats(data) {
+            document.getElementById('statTotal').textContent = data.total_processed || 0;
+            document.getElementById('statVouchers').textContent = data.vouchers || 0;
+            document.getElementById('statRegistered').textContent = data.registered || 0;
+            document.getElementById('statNotReg').textContent = data.not_registered || 0;
+            
+            if (data.vouchers > 0 && data.download_url) {
+                document.getElementById('downloadSection').style.display = 'block';
+                document.getElementById('downloadVouchers').href = data.download_url + '?type=vouchers';
+                document.getElementById('downloadAll').href = data.download_url + '?type=all';
+            }
+        }
+        
+        async function startChecking() {
+            const botToken = document.getElementById('botToken').value;
+            const chatId = document.getElementById('chatId').value;
+            const baseNumber = document.getElementById('baseNumber').value;
+            const numChecks = document.getElementById('numChecks').value;
+            
+            if (!baseNumber) {
+                alert('Please enter a base number');
+                return;
+            }
+            
+            // Clear previous log
+            document.getElementById('log').innerHTML = '';
+            document.getElementById('stats').classList.add('visible');
+            document.getElementById('downloadSection').style.display = 'none';
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('startBtn').textContent = 'Checking...';
+            
+            addLog('🚀 Starting SHEIN voucher checker...', 'info');
+            addLog(`📱 Base number: ${baseNumber}`, 'info');
+            addLog(`🔄 Will check ${numChecks} unique numbers`, 'info');
+            addLog(`📋 Filter: Only SVH, SVD, SVI, SVC prefixes trigger Telegram`, 'info');
+            
+            try {
+                const response = await fetch('/api/index.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        bot_token: botToken,
+                        chat_id: chatId,
+                        base_number: baseNumber,
+                        num_checks: parseInt(numChecks)
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    addLog(`❌ Error: ${data.error}`, 'error');
+                } else {
+                    // Display results
+                    addLog('✅ Checking completed!', 'success');
+                    addLog(`📊 Total checked: ${data.total_processed}`, 'success');
+                    addLog(`🎟️ Vouchers found: ${data.vouchers}`, 'voucher');
+                    addLog(`📱 Registered: ${data.registered}`, 'info');
+                    addLog(`❌ Not registered: ${data.not_registered}`, 'info');
+                    
+                    if (data.vouchers_found && data.vouchers_found.length > 0) {
+                        addLog('\n🎯 Vouchers Found:', 'voucher');
+                        data.vouchers_found.forEach(v => {
+                            const prefix = v.voucher.substring(0, 3);
+                            if (['SVH', 'SVD', 'SVI', 'SVC'].includes(prefix)) {
+                                addLog(`  ✅ ${v.number}: ${v.voucher} (₹${v.amount}) - @${v.username} - Telegram sent ✓`, 'voucher');
+                            } else {
+                                addLog(`  ⚠️ ${v.number}: ${v.voucher} (₹${v.amount}) - Filtered out (prefix ${prefix})`, 'filtered');
+                            }
+                        });
+                    }
+                    
+                    updateStats(data);
+                }
+            } catch (error) {
+                addLog(`❌ Error: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('startBtn').textContent = 'Start Checking';
+            }
+        }
+    </script>
+</body>
+</html>
