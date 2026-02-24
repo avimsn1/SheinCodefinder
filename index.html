@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SHEIN Voucher Checker</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 600px;
+            width: 100%;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .input-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+        }
+        
+        input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        button {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .results {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .result-item {
+            margin: 10px 0;
+            padding: 10px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .status-info {
+            background: #cce5ff;
+            color: #004085;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin: 20px 0;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .error-message {
+            color: #dc3545;
+            background: #f8d7da;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            display: none;
+        }
+        
+        .auto-mode {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e0e0e0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎟️ SHEIN Voucher Checker</h1>
+        <p class="subtitle">Check phone numbers for SHEIN vouchers</p>
+        
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-value" id="totalChecked">0</div>
+                <div class="stat-label">Total Checked</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="registered">0</div>
+                <div class="stat-label">Registered</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="vouchers">0</div>
+                <div class="stat-label">Vouchers</div>
+            </div>
+        </div>
+        
+        <div class="input-group">
+            <label for="phoneNumber">Phone Number Base</label>
+            <input type="text" id="phoneNumber" placeholder="Enter number (e.g., 98765)" value="98765">
+        </div>
+        
+        <div class="input-group">
+            <label for="checkCount">Numbers to Check</label>
+            <input type="number" id="checkCount" min="1" max="100" value="10">
+        </div>
+        
+        <button id="checkBtn" onclick="startChecking()">Start Checking</button>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Checking numbers... <span id="currentNumber"></span></p>
+        </div>
+        
+        <div class="error-message" id="error"></div>
+        
+        <div class="results" id="results">
+            <h3 style="margin-bottom: 15px;">📊 Results</h3>
+            <div id="resultsList"></div>
+        </div>
+        
+        <div class="auto-mode">
+            <h4>⚡ Auto Mode</h4>
+            <p style="color: #666; font-size: 14px; margin-bottom: 10px;">Check numbers every 5 seconds</p>
+            <button id="autoBtn" onclick="toggleAutoMode()" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);">Start Auto Mode</button>
+        </div>
+    </div>
+
+    <script>
+        let isChecking = false;
+        let autoMode = false;
+        let autoInterval = null;
+        let stats = {
+            total: 0,
+            registered: 0,
+            vouchers: 0
+        };
+        
+        async function checkNumber(number) {
+            try {
+                const response = await fetch('/api/check.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ number: number })
+                });
+                
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Error:', error);
+                return { error: error.message };
+            }
+        }
+        
+        function updateStats(result) {
+            stats.total++;
+            if (result.status === 'registered') {
+                stats.registered++;
+            }
+            if (result.status === 'voucher') {
+                stats.vouchers++;
+            }
+            
+            document.getElementById('totalChecked').textContent = stats.total;
+            document.getElementById('registered').textContent = stats.registered;
+            document.getElementById('vouchers').textContent = stats.vouchers;
+        }
+        
+        function addResultToUI(result) {
+            const resultsList = document.getElementById('resultsList');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = 'result-item';
+            
+            let statusClass = 'status-info';
+            let statusText = 'Unknown';
+            
+            if (result.status === 'not_registered') {
+                statusClass = 'status-error';
+                statusText = 'Not Registered';
+            } else if (result.status === 'registered') {
+                statusClass = 'status-success';
+                statusText = 'Registered';
+            }
+            
+            resultDiv.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <strong>📞 ${result.number}</strong>
+                        <span class="status-badge ${statusClass}">${statusText}</span>
+                    </div>
+                    <small>${result.timestamp}</small>
+                </div>
+                ${result.encryptedId ? `<div style="font-size: 12px; margin-top: 5px; color: #666;">ID: ${result.encryptedId.substring(0, 20)}...</div>` : ''}
+                ${result.error ? `<div style="color: #dc3545; font-size: 12px; margin-top: 5px;">Error: ${result.error}</div>` : ''}
+            `;
+            
+            resultsList.insertBefore(resultDiv, resultsList.firstChild);
+            
+            // Keep only last 10 results
+            while (resultsList.children.length > 10) {
+                resultsList.removeChild(resultsList.lastChild);
+            }
+        }
+        
+        async function startChecking() {
+            if (isChecking) return;
+            
+            const baseNumber = document.getElementById('phoneNumber').value.trim();
+            const checkCount = parseInt(document.getElementById('checkCount').value);
+            
+            if (!baseNumber) {
+                showError('Please enter a phone number');
+                return;
+            }
+            
+            isChecking = true;
+            document.getElementById('checkBtn').disabled = true;
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('error').style.display = 'none';
+            
+            for (let i = 0; i < checkCount; i++) {
+                document.getElementById('currentNumber').textContent = `(Checking ${i + 1}/${checkCount})`;
+                
+                const result = await checkNumber(baseNumber);
+                
+                if (result.error) {
+                    showError(result.error);
+                } else {
+                    updateStats(result);
+                    addResultToUI(result);
+                }
+                
+                // Wait 1 second between checks
+                if (i < checkCount - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
+            
+            isChecking = false;
+            document.getElementById('checkBtn').disabled = false;
+            document.getElementById('loading').style.display = 'none';
+        }
+        
+        function toggleAutoMode() {
+            const autoBtn = document.getElementById('autoBtn');
+            
+            if (!autoMode) {
+                // Start auto mode
+                autoMode = true;
+                autoBtn.textContent = 'Stop Auto Mode';
+                autoBtn.style.background = 'linear-gradient(135deg, #dc3545 0%, #c82333 100%)';
+                
+                // Run immediately
+                runAutoCheck();
+                
+                // Then every 5 seconds
+                autoInterval = setInterval(runAutoCheck, 5000);
+            } else {
+                // Stop auto mode
+                autoMode = false;
+                autoBtn.textContent = 'Start Auto Mode';
+                autoBtn.style.background = 'linear-gradient(135deg, #28a745 0%, #20c997 100%)';
+                clearInterval(autoInterval);
+            }
+        }
+        
+        async function runAutoCheck() {
+            if (isChecking) return;
+            
+            const baseNumber = document.getElementById('phoneNumber').value.trim();
+            
+            if (!baseNumber) {
+                showError('Please enter a phone number for auto mode');
+                toggleAutoMode();
+                return;
+            }
+            
+            const result = await checkNumber(baseNumber);
+            
+            if (result.error) {
+                showError(result.error);
+            } else {
+                updateStats(result);
+                addResultToUI(result);
+            }
+        }
+        
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            setTimeout(() => {
+                errorDiv.style.display = 'none';
+            }, 5000);
+        }
+    </script>
+</body>
+</html>
